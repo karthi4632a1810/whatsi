@@ -93,7 +93,6 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(body),
     }),
-  health: () => request("/api/settings/health"),
   hisLabToday: (params = {}) => {
     const q = new URLSearchParams(params).toString();
     return request(`/api/his/lab-today${q ? `?${q}` : ""}`);
@@ -121,5 +120,14 @@ export const api = {
   watiUpdateTemplate: (id, body) =>
     request(`/api/wati/templates/${id}`, { method: "PUT", body: JSON.stringify(body) }),
   watiDeleteTemplate: (id) => request(`/api/wati/templates/${id}`, { method: "DELETE" }),
-  watiContacts: () => request("/api/wati/contacts"),
+  watiContacts: (opts = {}) => {
+    const q = new URLSearchParams();
+    if (opts.refresh) q.set("refresh", "true");
+    const qs = q.toString();
+    return request(`/api/wati/contacts${qs ? `?${qs}` : ""}`);
+  },
+  health: (opts = {}) => {
+    const q = opts.refresh ? "?refresh=true" : "";
+    return request(`/api/settings/health${q}`);
+  },
 };

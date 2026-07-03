@@ -2,12 +2,15 @@ import { useEffect, useState } from "react";
 import { api } from "../api.js";
 import PageHeader from "../components/PageHeader.jsx";
 import WatiContactPicker from "../components/WatiContactPicker.jsx";
+import { cacheStatusLabel } from "../lib/watiCache.js";
 
 export default function SettingsPage() {
   const [settings, setSettings] = useState(null);
   const [health, setHealth] = useState(null);
   const [watiContacts, setWatiContacts] = useState([]);
+  const [contactsMeta, setContactsMeta] = useState(null);
   const [contactsLoading, setContactsLoading] = useState(false);
+  const [contactsRefreshing, setContactsRefreshing] = useState(false);
   const [contactsError, setContactsError] = useState("");
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
@@ -20,14 +23,25 @@ export default function SettingsPage() {
 
   useEffect(() => {
     if (!settings?.watiTestSendMode) return;
-    setContactsLoading(true);
-    setContactsError("");
-    api
-      .watiContacts()
-      .then((d) => setWatiContacts(d.contacts || []))
-      .catch((e) => setContactsError(e.message))
-      .finally(() => setContactsLoading(false));
+    loadContacts(false);
   }, [settings?.watiTestSendMode]);
+
+  async function loadContacts(refresh = false) {
+    if (refresh) setContactsRefreshing(true);
+    else setContactsLoading(true);
+    setContactsError("");
+    try {
+      const d = await api.watiContacts({ refresh });
+      setWatiContacts(d.contacts || []);
+      setContactsMeta(d);
+      if (d.error) setContactsError(d.error);
+    } catch (e) {
+      setContactsError(e.message);
+    } finally {
+      setContactsLoading(false);
+      setContactsRefreshing(false);
+    }
+  }
 
   function update(key, value) {
     setSaved(false);
@@ -207,10 +221,22 @@ export default function SettingsPage() {
           </label>
           {settings.watiTestSendMode ? (
             <>
-              <p className="field-hint">
-                Contacts listed here are available when you click Test send on the queue.
-                Automatic / bulk sends are blocked while test mode is on.
-              </p>
+              <div className="toolbar-row" style={{ marginBottom: 10 }}>
+                <p className="field-hint" style={{ margin: 0, flex: 1 }}>
+                  Contacts listed here are available when you click Test send on the queue.
+                  {cacheStatusLabel(contactsMeta) ? (
+                    <> · <strong>{cacheStatusLabel(contactsMeta)}</strong></>
+                  ) : null}
+                </p>
+                <button
+                  type="button"
+                  className="secondary btn-sm"
+                  disabled={contactsLoading || contactsRefreshing}
+                  onClick={() => loadContacts(true)}
+                >
+                  {contactsRefreshing ? "Refreshing…" : "Refresh from WATI"}
+                </button>
+              </div>
               <WatiContactPicker
                 contacts={watiContacts}
                 loading={contactsLoading}

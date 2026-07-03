@@ -155,6 +155,17 @@ export const MessageLog = mongoose.model("MessageLog", messageLogSchema);
 export const WatiTemplate = mongoose.model("WatiTemplate", watiTemplateSchema);
 export const User = mongoose.model("User", userSchema);
 
+const watiApiSnapshotSchema = new mongoose.Schema(
+  {
+    key: { type: String, required: true, unique: true, enum: ["contacts", "connection"] },
+    data: { type: mongoose.Schema.Types.Mixed, default: {} },
+    syncedAt: { type: Date, default: Date.now },
+  },
+  { timestamps: true }
+);
+
+export const WatiApiSnapshot = mongoose.model("WatiApiSnapshot", watiApiSnapshotSchema);
+
 export async function ensureAutomationSettings() {
   const existing = await AutomationSettings.findOne();
   if (!existing) {

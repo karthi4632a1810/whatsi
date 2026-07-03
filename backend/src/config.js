@@ -16,6 +16,8 @@ export const config = {
     sendEnabled: process.env.WATI_SEND_ENABLED === "true",
     testPhoneOnly: process.env.WATI_TEST_PHONE || "919360635207",
     testMode: process.env.WATI_TEST_MODE !== "false",
+    contactsCacheMs: Number(process.env.WATI_CONTACTS_CACHE_MS) || 30 * 60 * 1000,
+    connectionCacheMs: Number(process.env.WATI_CONNECTION_CACHE_MS) || 15 * 60 * 1000,
   },
   emr: {
     queryBuilderUrl:

@@ -8,7 +8,7 @@ import {
   updateTemplate,
 } from "../services/watiTemplates.js";
 import { getWatiOverview } from "../services/watiStats.js";
-import { listWatiContacts } from "../services/wati.js";
+import { listWatiContacts, refreshWatiContacts } from "../services/wati.js";
 
 const router = express.Router();
 
@@ -20,10 +20,11 @@ router.get("/overview", async (_req, res) => {
   }
 });
 
-router.get("/contacts", async (_req, res) => {
+router.get("/contacts", async (req, res) => {
   try {
-    const contacts = await listWatiContacts();
-    res.json({ contacts });
+    const force = req.query.refresh === "true" || req.query.force === "true";
+    const result = force ? await refreshWatiContacts() : await listWatiContacts();
+    res.json(result);
   } catch (error) {
     res.status(400).json({ error: error.message });
   }

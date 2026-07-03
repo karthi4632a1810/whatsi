@@ -38,8 +38,9 @@ router.put("/automation", async (req, res) => {
   res.json({ settings });
 });
 
-router.get("/health", async (_req, res) => {
-  const wati = await testWatiConnection();
+router.get("/health", async (req, res) => {
+  const force = req.query.refresh === "true";
+  const wati = await testWatiConnection({ force });
   let emrAuth = { ok: false, method: "none" };
   if (config.emr.cookie) {
     emrAuth = { ok: true, method: "cookie" };

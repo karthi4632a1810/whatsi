@@ -1,5 +1,6 @@
 import { config } from "../config.js";
 import { normalizePhone } from "../utils/phone.js";
+import { readWatiCache, writeWatiCache, clearWatiCache } from "./watiCache.js";
 
 function headers() {
   return {
@@ -71,16 +72,37 @@ export function normalizeWatiContact(contact = {}) {
   };
 }
 
-export async function listWatiContacts({ pageNumber = 1, pageSize = 500 } = {}) {
+export async function listWatiContacts({ pageNumber = 1, pageSize = 500, force = false } = {}) {
+  if (!force) {
+    const cached = await readWatiCache("contacts");
+    if (cached?.contacts) return cached;
+  }
+
   const result = await watiGet("api/v1/getContacts", { pageNumber, pageSize });
   if (!result.response.ok) {
+    const stale = await readWatiCache("contacts");
+    if (stale?.contacts?.length) {
+      return {
+        ...stale,
+        stale: true,
+        error: `WATI contacts failed (${result.response.status}) — showing cached list`,
+      };
+    }
     throw new Error(`WATI contacts failed (${result.response.status})`);
   }
   const contacts = extractList(result.data, ["contact_list", "contacts", "result", "data"])
     .map(normalizeWatiContact)
     .filter((c) => c.phone);
   contacts.sort((a, b) => a.name.localeCompare(b.name));
-  return contacts;
+
+  const payload = { contacts, cached: false };
+  const syncedAt = await writeWatiCache("contacts", { contacts });
+  return { contacts, cached: false, cachedAt: syncedAt.toISOString() };
+}
+
+export async function refreshWatiContacts() {
+  await clearWatiCache("contacts");
+  return listWatiContacts({ force: true });
 }
 
 export function canSendToPhone(phone, { testSendMode = false, allowedTestPhones = [] } = {}) {
@@ -126,28 +148,40 @@ export async function sendLabReportMessage({
   }
 
   const payload = buildTemplatePayload(templateName, patientName, attachmentUrl);
-  let result = await watiPost("api/v1/sendTemplateMessage", payload, { whatsappNumber });
-  if (!result.response.ok) {
-    result = await watiPost(
-      "api/v1/sendTemplateMessage",
-      { ...payload, customParams: payload.parameters },
-      { whatsappNumber }
-    );
-  }
-  if (!result.response.ok) {
+  const result = await watiPost("api/v1/sendTemplateMessage", payload, { whatsappNumber });
+  if (!result.response.ok && result.response.status >= 500) {
     throw new Error(
       `WATI send failed (${result.response.status}): ${JSON.stringify(result.data)}`
     );
   }
+  if (!result.response.ok) {
+    const retry = await watiPost(
+      "api/v1/sendTemplateMessage",
+      { ...payload, customParams: payload.parameters },
+      { whatsappNumber }
+    );
+    if (!retry.response.ok) {
+      throw new Error(
+        `WATI send failed (${retry.response.status}): ${JSON.stringify(retry.data)}`
+      );
+    }
+    return retry.data;
+  }
   return result.data;
 }
 
-export async function testWatiConnection() {
+export async function testWatiConnection({ force = false } = {}) {
   if (!config.wati.token || !config.wati.baseUrl) {
     return { ok: false, status: 0, templateCount: 0, error: "WATI credentials missing in .env" };
   }
+
+  if (!force) {
+    const cached = await readWatiCache("connection");
+    if (cached?.ok !== undefined) return cached;
+  }
+
   const result = await watiGet("api/v1/getMessageTemplates");
-  return {
+  const payload = {
     ok: result.response.ok,
     status: result.response.status,
     templateCount: Array.isArray(result.data?.messageTemplates)
@@ -156,5 +190,22 @@ export async function testWatiConnection() {
     error: result.response.ok
       ? ""
       : result.data?.message || result.data?.error || `WATI API error (${result.response.status})`,
+    cached: false,
   };
+
+  if (result.response.ok) {
+    const syncedAt = await writeWatiCache("connection", payload);
+    payload.cachedAt = syncedAt.toISOString();
+  } else {
+    const stale = await readWatiCache("connection");
+    if (stale?.ok) {
+      return {
+        ...stale,
+        stale: true,
+        error: payload.error || stale.error,
+      };
+    }
+  }
+
+  return payload;
 }

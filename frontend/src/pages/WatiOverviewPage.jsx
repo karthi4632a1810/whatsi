@@ -1,29 +1,39 @@
 import { useEffect, useState } from "react";
 import { api } from "../api.js";
 import PageHeader from "../components/PageHeader.jsx";
+import { cacheStatusLabel } from "../lib/watiCache.js";
 
 export default function WatiOverviewPage() {
   const [data, setData] = useState(null);
   const [contacts, setContacts] = useState([]);
+  const [contactsMeta, setContactsMeta] = useState(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [contactsLoading, setContactsLoading] = useState(true);
+  const [contactsRefreshing, setContactsRefreshing] = useState(false);
 
   useEffect(() => {
-    Promise.all([
-      api.watiOverview(),
-      api.watiContacts().catch(() => ({ contacts: [] })),
-    ])
-      .then(([overview, contactData]) => {
-        setData(overview);
-        setContacts(contactData.contacts || []);
-      })
+    api.watiOverview()
+      .then(setData)
       .catch((e) => setError(e.message))
-      .finally(() => {
-        setLoading(false);
-        setContactsLoading(false);
-      });
+      .finally(() => setLoading(false));
+    loadContacts(false);
   }, []);
+
+  async function loadContacts(refresh = false) {
+    if (refresh) setContactsRefreshing(true);
+    else setContactsLoading(true);
+    try {
+      const contactData = await api.watiContacts({ refresh });
+      setContacts(contactData.contacts || []);
+      setContactsMeta(contactData);
+    } catch {
+      setContacts([]);
+    } finally {
+      setContactsLoading(false);
+      setContactsRefreshing(false);
+    }
+  }
 
   if (loading) return <p className="muted panel-loading">Loading WATI overview…</p>;
 
@@ -108,10 +118,25 @@ export default function WatiOverviewPage() {
       </div>
 
       <div className="panel" style={{ marginTop: 14 }}>
-        <h3 className="panel-title">WATI contacts</h3>
-        <p className="field-hint" style={{ marginTop: 0 }}>
-          Contacts from your WATI account — used for test send mode in Settings.
-        </p>
+        <div className="toolbar-row">
+          <div>
+            <h3 className="panel-title" style={{ marginBottom: 4 }}>WATI contacts</h3>
+            <p className="field-hint" style={{ margin: 0 }}>
+              Cached locally to save API calls — refresh only when you add new test contacts.
+              {cacheStatusLabel(contactsMeta) ? (
+                <> · <strong>{cacheStatusLabel(contactsMeta)}</strong></>
+              ) : null}
+            </p>
+          </div>
+          <button
+            type="button"
+            className="secondary btn-sm"
+            disabled={contactsLoading || contactsRefreshing}
+            onClick={() => loadContacts(true)}
+          >
+            {contactsRefreshing ? "Refreshing…" : "Refresh from WATI"}
+          </button>
+        </div>
         {contactsLoading ? (
           <p className="muted">Loading contacts…</p>
         ) : contacts.length ? (
