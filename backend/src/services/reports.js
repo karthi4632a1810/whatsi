@@ -6,7 +6,6 @@ import {
   WatiTemplate,
 } from "../models/index.js";
 import {
-  pollApprovedOrders,
   buildLabReportUrl,
   resolveProcIds,
   fetchOrderStatusRows,
@@ -20,6 +19,12 @@ import { getOrderPdfMeta, upsertOrderPdfMeta } from "./orderPdfMeta.js";
 import { normalizePhone } from "../utils/phone.js";
 import { reportDayKey, startOfToday, endOfToday, parseQueryDate } from "../utils/dates.js";
 import { config } from "../config.js";
+import {
+  getStoredBoard,
+  refreshBoardFromEmr,
+  refreshOrderFromEmr,
+  getHisDaySummary,
+} from "./hisBoardStore.js";
 
 export { upsertOrderPdfMeta, getOrderPdfMeta, getOrderPdfMetaMap } from "./orderPdfMeta.js";
 
@@ -54,6 +59,7 @@ function shouldSyncSnapshot(settings, snapshot, existing, { manual = false } = {
   if (expanded) return true;
 
   if (manual) {
+    if (settings.readinessRule === "STRICT") return snapshot.readiness === "READY";
     return snapshot.readiness === "READY" || snapshot.readiness === "PARTIAL";
   }
 
@@ -70,7 +76,9 @@ export async function syncPatientsAndReports(snapshots, { manual = false } = {})
   let requeued = 0;
 
   for (const snapshot of snapshots) {
-    const day = reportDayKey(snapshot.reportReadyAt || snapshot.requestDate || new Date());
+    const day =
+      snapshot.labDay ||
+      reportDayKey(snapshot.reportReadyAt || snapshot.requestDate || new Date());
 
     const existingSameDay = await Report.findOne({
       reportId: snapshot.orderId,
@@ -190,6 +198,60 @@ export async function syncPatientsAndReports(snapshots, { manual = false } = {})
   return { created, updated, skipped, carriedForward, requeued, total: snapshots.length };
 }
 
+export function boardOrderToSnapshot(order, labDay) {
+  const procIds = order.procIds || [];
+  return {
+    orderId: String(order.orderId),
+    patientId: order.patientId || "",
+    patientName: order.patientName || "",
+    phone: order.phone || "",
+    opIpType: order.opIpType || "UNKNOWN",
+    department: order.department || "",
+    readiness: order.readiness,
+    procIds,
+    procedureNames: (order.procedures || []).map((p) => p.name).filter(Boolean),
+    procedureTotal: order.procedureTotal || 0,
+    approvedCount: order.approvedCount || 0,
+    reportReadyAt: order.completedAt || order.requestDate || new Date(),
+    hisReportUrl: procIds.length ? buildLabReportUrl(order.orderId, procIds) : "",
+    labDay,
+  };
+}
+
+/** Sync using the HIS lab board — reads MongoDB store when available. */
+export async function syncLabBoardToQueue({ from, to, manual = false, useStore = true } = {}) {
+  const settings = await getSettings();
+  const rangeFrom = from || startOfToday();
+  const rangeTo = to || endOfToday();
+  const labDay = reportDayKey(rangeFrom);
+
+  let board = [];
+  if (useStore) {
+    board = await getStoredBoard(labDay, "all");
+  }
+  if (!board.length) {
+    await refreshBoardFromEmr(labDay, { mode: "full" });
+    board = await getStoredBoard(labDay, "all");
+  }
+  if (!board.length) {
+    board = await fetchTodayLabBoard({ from: rangeFrom, to: rangeTo, filter: "all" });
+  }
+  const candidates = board.filter((order) => {
+    if (order.readiness === "WAITING") return false;
+    if (settings.readinessRule === "STRICT") return order.readiness === "READY";
+    return order.readiness === "READY" || order.readiness === "PARTIAL";
+  });
+
+  const snapshots = candidates.map((order) => boardOrderToSnapshot(order, labDay));
+  const sync = await syncPatientsAndReports(snapshots, { manual });
+  return {
+    ...sync,
+    labDay,
+    boardTotal: board.length,
+    candidates: candidates.length,
+  };
+}
+
 export async function syncOrderToQueue(orderId, { from, to, reportDay } = {}) {
   const settings = await getSettings();
   const rangeFrom = from ? parseQueryDate(from, false) : startOfToday();
@@ -207,9 +269,11 @@ export async function syncOrderToQueue(orderId, { from, to, reportDay } = {}) {
   if (snapshot.readiness === "WAITING") {
     throw new Error("Order is not ready — no approved results yet");
   }
+  snapshot.labDay = reportDay || reportDayKey(rangeFrom);
 
   const sync = await syncPatientsAndReports([snapshot], { manual: true });
-  const day = reportDay || reportDayKey(snapshot.reportReadyAt || new Date());
+  const day = snapshot.labDay;
+  await refreshOrderFromEmr(day, id).catch(() => {});
   const report = await Report.findOne({ reportId: id, reportDay: day }).sort({ updatedAt: -1 });
 
   if (sync.skipped && !report) {
@@ -224,28 +288,33 @@ export async function syncOrderToQueue(orderId, { from, to, reportDay } = {}) {
   };
 }
 
-export async function runEmrPoll({ from, to, autoSend = false } = {}) {
+export async function runEmrPoll({ from, to, autoSend = false, manual = false } = {}) {
   const settings = await getSettings();
   const rangeFrom = from || startOfToday();
   const rangeTo = to || endOfToday();
-  const snapshots = await pollApprovedOrders({
+  const labDay = reportDayKey(rangeFrom);
+
+  const boardRefresh = await refreshBoardFromEmr(labDay, {
+    mode: manual ? "full" : "incremental",
+  });
+  const sync = await syncLabBoardToQueue({
     from: rangeFrom,
     to: rangeTo,
-    readinessRule: settings.readinessRule,
+    manual,
+    useStore: true,
   });
-  const sync = await syncPatientsAndReports(snapshots);
 
   if (
     autoSend &&
-    settings.automationEnabled &&
+    settings.messageSendEnabled &&
     settings.mode === "IMMEDIATE" &&
     !settings.watiTestSendMode
   ) {
     const sendResult = await sendPendingReports({ triggerType: "AUTO_IMMEDIATE" });
-    return { ...sync, sendResult };
+    return { ...sync, boardRefresh, sendResult };
   }
 
-  return sync;
+  return { ...sync, boardRefresh };
 }
 
 export async function resolveOrderPdfUrl(orderId, { procIds: hintProcIds = [] } = {}) {
@@ -340,11 +409,15 @@ export async function sendReportById(
 
   const settings = await getSettings();
   const useTestSend = Boolean(settings.watiTestSendMode);
-  if (!settings.automationEnabled && triggerType !== "MANUAL") {
-    throw new Error("Automation is disabled — enable it in Settings");
-  }
-  if (useTestSend && triggerType !== "MANUAL") {
-    throw new Error("Test send mode: automatic sends are disabled — use Test send on each report");
+  if (triggerType !== "MANUAL") {
+    if (!settings.messageSendEnabled) {
+      throw new Error("Message sending is disabled — enable it in Settings");
+    }
+    if (useTestSend) {
+      throw new Error("Test send mode: automatic sends are disabled — use Test send on each report");
+    }
+  } else if (!useTestSend && !settings.messageSendEnabled) {
+    throw new Error("Message sending is disabled — enable it in Settings");
   }
 
   const defaultTpl = await WatiTemplate.findOne({ isDefault: true, status: "ACTIVE" });
@@ -376,7 +449,16 @@ export async function sendReportById(
     throw new Error("Patient phone missing");
   }
   if (!useTestSend && !canSendToPhone(deliveryPhones[0])) {
-    throw new Error("Send blocked by WATI safety settings (enable WATI_SEND_ENABLED / test mode)");
+    if (!config.wati.sendEnabled) {
+      throw new Error("Send blocked: set WATI_SEND_ENABLED=true in server .env and restart the API");
+    }
+    if (config.wati.testMode) {
+      throw new Error(
+        `Send blocked: WATI test mode only allows ${config.wati.testPhoneOnly} (patient is ${deliveryPhones[0]}). ` +
+          "Use Settings → Test send mode to send to a WATI contact, or set WATI_TEST_MODE=false for live delivery."
+      );
+    }
+    throw new Error("Send blocked by WATI safety settings");
   }
 
   report.status = "QUEUED";
@@ -485,26 +567,28 @@ export async function sendPendingReports({
   const settings = await getSettings();
   const maxAttempts = settings.retryPolicy?.maxAttempts ?? 3;
 
-  if (!settings.automationEnabled && triggerType !== "MANUAL") {
-    return {
-      sent: 0,
-      failed: 0,
-      skipped: reports.length,
-      errors: [],
-      blocked: true,
-      reason: "Automation is disabled — enable it in Settings",
-    };
-  }
+  if (triggerType !== "MANUAL") {
+    if (!settings.messageSendEnabled) {
+      return {
+        sent: 0,
+        failed: 0,
+        skipped: reports.length,
+        errors: [],
+        blocked: true,
+        reason: "Message sending is disabled — enable it in Settings",
+      };
+    }
 
-  if (settings.watiTestSendMode && triggerType !== "MANUAL") {
-    return {
-      sent: 0,
-      failed: 0,
-      skipped: reports.length,
-      errors: [],
-      blocked: true,
-      reason: "Test send mode: automatic sends are disabled",
-    };
+    if (settings.watiTestSendMode) {
+      return {
+        sent: 0,
+        failed: 0,
+        skipped: reports.length,
+        errors: [],
+        blocked: true,
+        reason: "Test send mode: automatic sends are disabled",
+      };
+    }
   }
 
   const results = { sent: 0, failed: 0, skipped: 0, errors: [] };
@@ -558,6 +642,20 @@ export async function aggregateQueueStats(match = {}) {
 
 export async function getHisDayStats(date) {
   const day = date || reportDayKey();
+  const stored = await getHisDaySummary(day);
+  if (stored) {
+    return {
+      date: day,
+      total: stored.total,
+      ready: stored.ready,
+      partial: stored.partial,
+      approved: stored.approved,
+      inProcess: stored.inProcess,
+      source: "mongodb",
+      lastSyncAt: stored.lastSyncAt,
+    };
+  }
+
   const from = parseQueryDate(day, false);
   const to = parseQueryDate(day, true);
   const board = await fetchTodayLabBoard({ from, to, filter: "all" });
@@ -568,6 +666,7 @@ export async function getHisDayStats(date) {
     partial: board.filter((o) => o.readiness === "PARTIAL").length,
     approved: board.filter((o) => o.hisStatus === "RESULT APPROVED").length,
     inProcess: board.filter((o) => o.hisStatus === "IN PROCESS").length,
+    source: "emr",
   };
 }
 
@@ -576,7 +675,7 @@ export async function getDashboardStats({ scope = "today", date } = {}) {
   const targetDay =
     date && parseQueryDate(date, false) ? reportDayKey(parseQueryDate(date, false)) : today;
 
-  const [queueOverall, queueDay, byDayRows, messagesFailed] = await Promise.all([
+  const [queueOverall, queueDay, byDayRows, messagesFailed, testSentOverall, testSentDay, testByDayRows] = await Promise.all([
     aggregateQueueStats({}),
     aggregateQueueStats({ reportDay: targetDay }),
     Report.aggregate([
@@ -598,10 +697,31 @@ export async function getDashboardStats({ scope = "today", date } = {}) {
       { $limit: 21 },
     ]),
     MessageLog.countDocuments({ status: "FAILED" }),
+    MessageLog.countDocuments({ status: "SENT", "requestPayload.testSend": true }),
+    MessageLog.countDocuments({
+      status: "SENT",
+      "requestPayload.testSend": true,
+      reportDay: targetDay,
+    }),
+    MessageLog.aggregate([
+      {
+        $match: {
+          status: "SENT",
+          "requestPayload.testSend": true,
+          reportDay: { $exists: true, $nin: [null, ""] },
+        },
+      },
+      { $group: { _id: "$reportDay", testSent: { $sum: 1 } } },
+      { $sort: { _id: -1 } },
+      { $limit: 21 },
+    ]),
   ]);
 
   const settings = await getSettings();
-  const queue = scope === "overall" ? queueOverall : queueDay;
+  const queueOverallWithTest = { ...queueOverall, testSent: testSentOverall };
+  const queueDayWithTest = { ...queueDay, testSent: testSentDay };
+  const queue = scope === "overall" ? queueOverallWithTest : queueDayWithTest;
+  const testByDay = new Map(testByDayRows.map((row) => [row._id, row.testSent || 0]));
 
   return {
     scope,
@@ -609,8 +729,8 @@ export async function getDashboardStats({ scope = "today", date } = {}) {
     today,
     his: null,
     queue,
-    queueOverall,
-    queueDay,
+    queueOverall: queueOverallWithTest,
+    queueDay: queueDayWithTest,
     byDay: byDayRows.map((row) => ({
       date: row._id,
       total: row.total,
@@ -618,6 +738,7 @@ export async function getDashboardStats({ scope = "today", date } = {}) {
       partial: row.partial,
       pending: row.pending,
       sent: row.sent,
+      testSent: testByDay.get(row._id) || 0,
       failed: row.failed,
     })),
     pending: queueDay.pending,
@@ -626,6 +747,7 @@ export async function getDashboardStats({ scope = "today", date } = {}) {
     failed: queueOverall.failed,
     messagesFailed,
     automationEnabled: settings.automationEnabled,
+    messageSendEnabled: settings.messageSendEnabled,
     mode: settings.mode,
     endOfDayTime: settings.endOfDayTime,
     watiSendEnabled: config.wati.sendEnabled,

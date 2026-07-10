@@ -2,15 +2,11 @@ import { useEffect, useState } from "react";
 import { api } from "../api.js";
 import PageHeader from "../components/PageHeader.jsx";
 import WatiContactPicker from "../components/WatiContactPicker.jsx";
-import { cacheStatusLabel } from "../lib/watiCache.js";
 
 export default function SettingsPage() {
   const [settings, setSettings] = useState(null);
   const [health, setHealth] = useState(null);
   const [watiContacts, setWatiContacts] = useState([]);
-  const [contactsMeta, setContactsMeta] = useState(null);
-  const [contactsLoading, setContactsLoading] = useState(false);
-  const [contactsRefreshing, setContactsRefreshing] = useState(false);
   const [contactsError, setContactsError] = useState("");
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
@@ -20,28 +16,6 @@ export default function SettingsPage() {
     api.settings().then((d) => setSettings(d.settings)).catch((e) => setError(e.message));
     api.health().then(setHealth).catch(() => {});
   }, []);
-
-  useEffect(() => {
-    if (!settings?.watiTestSendMode) return;
-    loadContacts(false);
-  }, [settings?.watiTestSendMode]);
-
-  async function loadContacts(refresh = false) {
-    if (refresh) setContactsRefreshing(true);
-    else setContactsLoading(true);
-    setContactsError("");
-    try {
-      const d = await api.watiContacts({ refresh });
-      setWatiContacts(d.contacts || []);
-      setContactsMeta(d);
-      if (d.error) setContactsError(d.error);
-    } catch (e) {
-      setContactsError(e.message);
-    } finally {
-      setContactsLoading(false);
-      setContactsRefreshing(false);
-    }
-  }
 
   function update(key, value) {
     setSaved(false);
@@ -65,8 +39,8 @@ export default function SettingsPage() {
   }
 
   async function sendAllPending() {
-    if (!settings?.automationEnabled) {
-      setError("Turn on Automation enabled above before sending all pending reports.");
+    if (!settings?.messageSendEnabled) {
+      setError("Turn on Message sending in Settings before sending to patients.");
       return;
     }
     if (settings?.watiTestSendMode) {
@@ -105,7 +79,7 @@ export default function SettingsPage() {
 
       <div className="settings-grid">
         <section className="panel settings-section settings-section--wide">
-          <h3 className="panel-title">Automation</h3>
+          <h3 className="panel-title">Automation (HIS → queue)</h3>
           <label className="toggle-field">
             <input
               type="checkbox"
@@ -116,14 +90,15 @@ export default function SettingsPage() {
             <span>
               <strong>Automation enabled</strong>
               <small>
-                Master switch — EMR poll, scheduled send, and retries run only when this is ON
+                Polls HIS on schedule and syncs ready reports into the WhatsApp queue — does not
+                send messages
               </small>
             </span>
           </label>
           {!settings.automationEnabled ? (
             <p className="field-hint field-hint--warn">
-              Automation is OFF. Nothing sends automatically. Use Test send on the queue for manual
-              tests, or turn this on when ready for live delivery.
+              Automation is OFF. Use <em>Sync to queue</em> on HIS Lab Today for manual sync, or
+              turn this on for automatic queue updates.
             </p>
           ) : null}
         </section>
@@ -132,36 +107,7 @@ export default function SettingsPage() {
           className={`panel settings-section${settings.automationEnabled ? "" : " settings-section--disabled"}`}
           aria-disabled={!settings.automationEnabled}
         >
-          <h3 className="panel-title">Schedule</h3>
-          <div className="form-grid">
-            <label className="field-label">
-              Mode
-              <select
-                value={settings.mode}
-                disabled={!settings.automationEnabled}
-                onChange={(e) => update("mode", e.target.value)}
-              >
-                <option value="END_OF_DAY">End of day</option>
-                <option value="IMMEDIATE">Immediate</option>
-              </select>
-            </label>
-            <label className="field-label">
-              End of day time
-              <input
-                type="time"
-                disabled={!settings.automationEnabled}
-                value={settings.endOfDayTime || "18:00"}
-                onChange={(e) => update("endOfDayTime", e.target.value)}
-              />
-            </label>
-          </div>
-        </section>
-
-        <section
-          className={`panel settings-section${settings.automationEnabled ? "" : " settings-section--disabled"}`}
-          aria-disabled={!settings.automationEnabled}
-        >
-          <h3 className="panel-title">Delivery rules</h3>
+          <h3 className="panel-title">Queue rules</h3>
           <div className="form-grid">
             <label className="field-label">
               Patient scope
@@ -189,6 +135,64 @@ export default function SettingsPage() {
           </div>
         </section>
 
+        <section className="panel settings-section settings-section--wide">
+          <h3 className="panel-title">Message sending</h3>
+          <label className="toggle-field">
+            <input
+              type="checkbox"
+              checked={Boolean(settings.messageSendEnabled)}
+              onChange={(e) => update("messageSendEnabled", e.target.checked)}
+            />
+            <span className="toggle-track" aria-hidden />
+            <span>
+              <strong>Message sending enabled</strong>
+              <small>
+                Allows WhatsApp delivery to patient phones — scheduled, bulk, and queue send buttons
+              </small>
+            </span>
+          </label>
+          {!settings.messageSendEnabled ? (
+            <p className="field-hint field-hint--warn">
+              Sending is OFF. Queue sync still works. Use <em>Test send</em> on the queue for safe
+              tests without enabling patient delivery.
+            </p>
+          ) : !health?.watiSendEnabled ? (
+            <p className="field-hint field-hint--warn">
+              Also set <code>WATI_SEND_ENABLED=true</code> in server <code>.env</code> before live
+              messages can leave the server.
+            </p>
+          ) : null}
+        </section>
+
+        <section
+          className={`panel settings-section${settings.messageSendEnabled ? "" : " settings-section--disabled"}`}
+          aria-disabled={!settings.messageSendEnabled}
+        >
+          <h3 className="panel-title">Send schedule</h3>
+          <div className="form-grid">
+            <label className="field-label">
+              Mode
+              <select
+                value={settings.mode}
+                disabled={!settings.messageSendEnabled}
+                onChange={(e) => update("mode", e.target.value)}
+              >
+                <option value="END_OF_DAY">End of day</option>
+                <option value="IMMEDIATE">Immediate (after each HIS poll)</option>
+              </select>
+            </label>
+            <label className="field-label">
+              End of day time
+              <input
+                type="time"
+                disabled={!settings.messageSendEnabled}
+                value={settings.endOfDayTime || "18:00"}
+                onChange={(e) => update("endOfDayTime", e.target.value)}
+              />
+            </label>
+          </div>
+        </section>
+
         <section className="panel settings-section">
           <h3 className="panel-title">WATI template</h3>
           <label className="field-label">
@@ -199,7 +203,8 @@ export default function SettingsPage() {
             />
           </label>
           <p className="field-hint">
-            Sends are blocked unless <code>WATI_SEND_ENABLED=true</code> in server .env.
+            Patient sends also require <strong>Message sending enabled</strong> above and{" "}
+            <code>WATI_SEND_ENABLED=true</code> in server <code>.env</code>.
           </p>
         </section>
 
@@ -221,25 +226,11 @@ export default function SettingsPage() {
           </label>
           {settings.watiTestSendMode ? (
             <>
-              <div className="toolbar-row" style={{ marginBottom: 10 }}>
-                <p className="field-hint" style={{ margin: 0, flex: 1 }}>
-                  Contacts listed here are available when you click Test send on the queue.
-                  {cacheStatusLabel(contactsMeta) ? (
-                    <> · <strong>{cacheStatusLabel(contactsMeta)}</strong></>
-                  ) : null}
-                </p>
-                <button
-                  type="button"
-                  className="secondary btn-sm"
-                  disabled={contactsLoading || contactsRefreshing}
-                  onClick={() => loadContacts(true)}
-                >
-                  {contactsRefreshing ? "Refreshing…" : "Refresh from WATI"}
-                </button>
-              </div>
+              <p className="field-hint" style={{ marginBottom: 10 }}>
+                Add test numbers below — WATI API is only used when you send a report.
+              </p>
               <WatiContactPicker
                 contacts={watiContacts}
-                loading={contactsLoading}
                 contactsError={contactsError}
                 selectedPhones={settings.watiTestContactPhones || []}
                 onChange={(phones) => update("watiTestContactPhones", phones)}
@@ -252,10 +243,13 @@ export default function SettingsPage() {
           <h3 className="panel-title">System status</h3>
           <div className="status-pills">
             <span className={`status-pill ${health?.wati?.ok ? "ok" : "bad"}`}>
-              WATI {health?.wati?.ok ? "connected" : "error"}
+              WATI {health?.wati?.ok ? "configured" : "not configured"}
             </span>
-            <span className={`status-pill ${health?.watiSendEnabled ? "warn" : "ok"}`}>
-              Send {health?.watiSendEnabled ? "enabled" : "disabled (safe)"}
+            <span className={`status-pill ${health?.messageSendEnabled ? "warn" : "ok"}`}>
+              Send {health?.messageSendEnabled ? "enabled" : "disabled (safe)"}
+            </span>
+            <span className={`status-pill ${settings.automationEnabled ? "ok" : "neutral"}`}>
+              Queue sync {settings.automationEnabled ? "on" : "off"}
             </span>
             <span className={`status-pill ${health?.emrPollEnabled ? "ok" : "neutral"}`}>
               EMR poll {health?.emrPollEnabled ? "on" : "off"}
@@ -272,10 +266,10 @@ export default function SettingsPage() {
           className="secondary"
           type="button"
           onClick={sendAllPending}
-          disabled={!settings.automationEnabled || settings.watiTestSendMode}
+          disabled={!settings.messageSendEnabled || settings.watiTestSendMode}
           title={
-            !settings.automationEnabled
-              ? "Enable automation in Settings first"
+            !settings.messageSendEnabled
+              ? "Enable message sending in Settings first"
               : settings.watiTestSendMode
                 ? "Disabled while test send mode is on"
                 : "Send every pending report to patient phones"

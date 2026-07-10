@@ -80,7 +80,6 @@ const STATUS_OPTIONS = [
 export default function ReportsPage() {
   const [reports, setReports] = useState([]);
   const [settings, setSettings] = useState(null);
-  const [watiContacts, setWatiContacts] = useState([]);
   const [status, setStatus] = useState("");
   const [q, setQ] = useState("");
   const [selected, setSelected] = useState(new Set());
@@ -93,10 +92,7 @@ export default function ReportsPage() {
   const testSendMode = Boolean(settings?.watiTestSendMode);
   const testPhones = settings?.watiTestContactPhones || [];
 
-  const contactMap = useMemo(
-    () => new Map(watiContacts.map((c) => [c.phone, c])),
-    [watiContacts]
-  );
+  const contactMap = useMemo(() => new Map(), []);
 
   const testContactOptions = useMemo(
     () =>
@@ -128,7 +124,6 @@ export default function ReportsPage() {
   useEffect(() => {
     load().catch((e) => setError(e.message));
     api.settings().then((d) => setSettings(d.settings)).catch(() => {});
-    api.watiContacts().then((d) => setWatiContacts(d.contacts || [])).catch(() => {});
   }, [status]);
 
   function toggle(id) {

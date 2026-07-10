@@ -18,6 +18,7 @@ export const config = {
     testMode: process.env.WATI_TEST_MODE !== "false",
     contactsCacheMs: Number(process.env.WATI_CONTACTS_CACHE_MS) || 30 * 60 * 1000,
     connectionCacheMs: Number(process.env.WATI_CONNECTION_CACHE_MS) || 15 * 60 * 1000,
+    basicPlanApiLimit: Number(process.env.WATI_BASIC_PLAN_API_LIMIT) || 0,
   },
   emr: {
     queryBuilderUrl:

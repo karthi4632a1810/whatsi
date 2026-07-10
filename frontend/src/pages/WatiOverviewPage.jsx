@@ -10,28 +10,25 @@ export default function WatiOverviewPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [contactsLoading, setContactsLoading] = useState(true);
-  const [contactsRefreshing, setContactsRefreshing] = useState(false);
 
   useEffect(() => {
     api.watiOverview()
       .then(setData)
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
-    loadContacts(false);
+    loadContacts();
   }, []);
 
-  async function loadContacts(refresh = false) {
-    if (refresh) setContactsRefreshing(true);
-    else setContactsLoading(true);
+  async function loadContacts() {
+    setContactsLoading(true);
     try {
-      const contactData = await api.watiContacts({ refresh });
+      const contactData = await api.watiContacts();
       setContacts(contactData.contacts || []);
       setContactsMeta(contactData);
     } catch {
       setContacts([]);
     } finally {
       setContactsLoading(false);
-      setContactsRefreshing(false);
     }
   }
 
@@ -64,6 +61,19 @@ export default function WatiOverviewPage() {
           <h3>Failed backlog</h3>
           <div className="value">{data?.allTime?.failed ?? "—"}</div>
         </div>
+        <div className="stat-card stat-card--synced">
+          <h3>WATI API usage</h3>
+          <div className="value">
+            {data?.apiUsage?.limit
+              ? `${data.apiUsage.calls ?? 0}/${data.apiUsage.limit}`
+              : (data?.apiUsage?.calls ?? "—")}
+          </div>
+          <p className="stat-hint">
+            {data?.apiUsage?.limit
+              ? `${data.apiUsage.percentUsed ?? 0}% used · ${data.apiUsage.remaining ?? 0} left (${data.apiUsage.period}) · send only`
+              : `Report sends this month (${data?.apiUsage?.period || "—"}) · set WATI_BASIC_PLAN_API_LIMIT`}
+          </p>
+        </div>
       </div>
 
       <div className="settings-grid">
@@ -71,18 +81,19 @@ export default function WatiOverviewPage() {
           <h3 className="panel-title">Connection</h3>
           <div className="status-pills">
             <span className={`status-pill ${data?.connection?.ok ? "ok" : "bad"}`}>
-              WATI {data?.connection?.ok ? "connected" : "error"}
+              WATI {data?.connection?.ok ? "configured" : "not configured"}
             </span>
             {data?.connection?.error ? (
               <span className="status-pill bad" title={data.connection.error}>
                 {data.connection.error}
               </span>
+            ) : data?.connection?.note ? (
+              <span className="status-pill neutral" title={data.connection.note}>
+                API used on send only
+              </span>
             ) : null}
             <span className={`status-pill ${data?.config?.sendEnabled ? "warn" : "ok"}`}>
               Send {data?.config?.sendEnabled ? "enabled" : "disabled (safe)"}
-            </span>
-            <span className="status-pill neutral">
-              Templates remote: {data?.connection?.templateCount ?? 0}
             </span>
             {data?.today?.successRate != null ? (
               <span className="status-pill ok">Today success {data.today.successRate}%</span>
@@ -118,24 +129,15 @@ export default function WatiOverviewPage() {
       </div>
 
       <div className="panel" style={{ marginTop: 14 }}>
-        <div className="toolbar-row">
-          <div>
-            <h3 className="panel-title" style={{ marginBottom: 4 }}>WATI contacts</h3>
-            <p className="field-hint" style={{ margin: 0 }}>
-              Cached locally to save API calls — refresh only when you add new test contacts.
-              {cacheStatusLabel(contactsMeta) ? (
-                <> · <strong>{cacheStatusLabel(contactsMeta)}</strong></>
-              ) : null}
-            </p>
-          </div>
-          <button
-            type="button"
-            className="secondary btn-sm"
-            disabled={contactsLoading || contactsRefreshing}
-            onClick={() => loadContacts(true)}
-          >
-            {contactsRefreshing ? "Refreshing…" : "Refresh from WATI"}
-          </button>
+        <div>
+          <h3 className="panel-title" style={{ marginBottom: 4 }}>Test contacts (saved)</h3>
+          <p className="field-hint" style={{ margin: 0 }}>
+            WATI is not called to fetch contacts — add test numbers in Settings.
+            {cacheStatusLabel(contactsMeta) ? (
+              <> · <strong>{cacheStatusLabel(contactsMeta)}</strong></>
+            ) : null}
+            {contactsMeta?.note ? <> · {contactsMeta.note}</> : null}
+          </p>
         </div>
         {contactsLoading ? (
           <p className="muted">Loading contacts…</p>
@@ -161,7 +163,7 @@ export default function WatiOverviewPage() {
             </table>
           </div>
         ) : (
-          <p className="muted">No contacts returned from WATI.</p>
+          <p className="muted">No saved contacts — add test numbers in Settings.</p>
         )}
       </div>
 

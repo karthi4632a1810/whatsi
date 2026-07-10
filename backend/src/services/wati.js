@@ -1,6 +1,9 @@
 import { config } from "../config.js";
 import { normalizePhone } from "../utils/phone.js";
-import { readWatiCache, writeWatiCache, clearWatiCache } from "./watiCache.js";
+import {
+  readWatiCache,
+  incrementWatiApiUsage,
+} from "./watiCache.js";
 
 function headers() {
   return {
@@ -15,6 +18,19 @@ async function parseResponse(response) {
     return { response, data: text ? JSON.parse(text) : {} };
   } catch {
     return { response, data: { raw: text } };
+  }
+}
+
+function isWatiHtmlResponse(data) {
+  const raw = typeof data?.raw === "string" ? data.raw : "";
+  return raw.includes("<!doctype html") || raw.includes("<html");
+}
+
+function assertWatiJsonResponse(result, action) {
+  if (isWatiHtmlResponse(result.data)) {
+    throw new Error(
+      `WATI ${action} returned the web app instead of API JSON — refresh WATI_TOKEN in .env (token may be expired)`
+    );
   }
 }
 
@@ -49,13 +65,6 @@ function buildTemplatePayload(templateName, patientName, attachmentUrl) {
   };
 }
 
-function extractList(data, keys) {
-  if (Array.isArray(data)) return data;
-  for (const key of keys) {
-    if (Array.isArray(data?.[key])) return data[key];
-  }
-  return [];
-}
 
 export function normalizeWatiContact(contact = {}) {
   const phone = normalizePhone(contact.phone || contact.whatsappNumber || contact.wAid || "");
@@ -72,37 +81,35 @@ export function normalizeWatiContact(contact = {}) {
   };
 }
 
-export async function listWatiContacts({ pageNumber = 1, pageSize = 500, force = false } = {}) {
-  if (!force) {
-    const cached = await readWatiCache("contacts");
-    if (cached?.contacts) return cached;
+export async function listWatiContacts({ force = false } = {}) {
+  if (force) {
+    throw new Error(
+      "WATI contact import is disabled. Add test numbers manually in Settings — WATI API is only used when sending reports."
+    );
   }
 
-  const result = await watiGet("api/v1/getContacts", { pageNumber, pageSize });
-  if (!result.response.ok) {
-    const stale = await readWatiCache("contacts");
-    if (stale?.contacts?.length) {
-      return {
-        ...stale,
-        stale: true,
-        error: `WATI contacts failed (${result.response.status}) — showing cached list`,
-      };
-    }
-    throw new Error(`WATI contacts failed (${result.response.status})`);
+  const cached = await readWatiCache("contacts");
+  if (cached?.contacts?.length) {
+    return {
+      ...cached,
+      cached: true,
+      apiDisabled: true,
+      note: "Showing saved contact list only. WATI API is not called except on send.",
+    };
   }
-  const contacts = extractList(result.data, ["contact_list", "contacts", "result", "data"])
-    .map(normalizeWatiContact)
-    .filter((c) => c.phone);
-  contacts.sort((a, b) => a.name.localeCompare(b.name));
 
-  const payload = { contacts, cached: false };
-  const syncedAt = await writeWatiCache("contacts", { contacts });
-  return { contacts, cached: false, cachedAt: syncedAt.toISOString() };
+  return {
+    contacts: [],
+    cached: false,
+    apiDisabled: true,
+    note: "Add test numbers in Settings. WATI API is only used when sending a report.",
+  };
 }
 
 export async function refreshWatiContacts() {
-  await clearWatiCache("contacts");
-  return listWatiContacts({ force: true });
+  throw new Error(
+    "WATI contact import is disabled. Add test numbers manually in Settings — WATI API is only used when sending reports."
+  );
 }
 
 export function canSendToPhone(phone, { testSendMode = false, allowedTestPhones = [] } = {}) {
@@ -148,18 +155,26 @@ export async function sendLabReportMessage({
   }
 
   const payload = buildTemplatePayload(templateName, patientName, attachmentUrl);
+  await incrementWatiApiUsage({ method: "POST", endpoint: "api/v1/sendTemplateMessage" }).catch(
+    () => {}
+  );
   const result = await watiPost("api/v1/sendTemplateMessage", payload, { whatsappNumber });
+  assertWatiJsonResponse(result, "sendTemplateMessage");
   if (!result.response.ok && result.response.status >= 500) {
     throw new Error(
       `WATI send failed (${result.response.status}): ${JSON.stringify(result.data)}`
     );
   }
   if (!result.response.ok) {
+    await incrementWatiApiUsage({ method: "POST", endpoint: "api/v1/sendTemplateMessage" }).catch(
+      () => {}
+    );
     const retry = await watiPost(
       "api/v1/sendTemplateMessage",
       { ...payload, customParams: payload.parameters },
       { whatsappNumber }
     );
+    assertWatiJsonResponse(retry, "sendTemplateMessage");
     if (!retry.response.ok) {
       throw new Error(
         `WATI send failed (${retry.response.status}): ${JSON.stringify(retry.data)}`
@@ -167,45 +182,31 @@ export async function sendLabReportMessage({
     }
     return retry.data;
   }
+  if (result.data?.result !== true && result.data?.ok !== true) {
+    throw new Error(
+      `WATI send rejected: ${result.data?.info || result.data?.message || JSON.stringify(result.data).slice(0, 200)}`
+    );
+  }
   return result.data;
 }
 
-export async function testWatiConnection({ force = false } = {}) {
+export async function testWatiConnection() {
   if (!config.wati.token || !config.wati.baseUrl) {
-    return { ok: false, status: 0, templateCount: 0, error: "WATI credentials missing in .env" };
+    return {
+      ok: false,
+      status: 0,
+      templateCount: 0,
+      error: "WATI credentials missing in .env",
+      source: "config",
+    };
   }
 
-  if (!force) {
-    const cached = await readWatiCache("connection");
-    if (cached?.ok !== undefined) return cached;
-  }
-
-  const result = await watiGet("api/v1/getMessageTemplates");
-  const payload = {
-    ok: result.response.ok,
-    status: result.response.status,
-    templateCount: Array.isArray(result.data?.messageTemplates)
-      ? result.data.messageTemplates.length
-      : 0,
-    error: result.response.ok
-      ? ""
-      : result.data?.message || result.data?.error || `WATI API error (${result.response.status})`,
-    cached: false,
+  return {
+    ok: true,
+    status: 200,
+    templateCount: null,
+    error: "",
+    source: "config",
+    note: "Credentials configured. WATI API is only called when sending a report.",
   };
-
-  if (result.response.ok) {
-    const syncedAt = await writeWatiCache("connection", payload);
-    payload.cachedAt = syncedAt.toISOString();
-  } else {
-    const stale = await readWatiCache("connection");
-    if (stale?.ok) {
-      return {
-        ...stale,
-        stale: true,
-        error: payload.error || stale.error,
-      };
-    }
-  }
-
-  return payload;
 }

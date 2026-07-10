@@ -61,7 +61,7 @@ export default function WatiContactPicker({
       {!loading && !contacts.length ? (
         <p className="muted">
           {contactsError ||
-            "WATI contact list is empty. Add test numbers manually below, or check WATI_TOKEN in .env."}
+            "Add test numbers below (10-digit or with country code). WATI is only called when sending a report."}
         </p>
       ) : null}
 

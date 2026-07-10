@@ -54,3 +54,70 @@ export async function clearWatiCache(key) {
   memory.delete(key);
   await WatiApiSnapshot.deleteOne({ key });
 }
+
+function usagePeriod(now = new Date()) {
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, "0");
+  return `${y}-${m}`;
+}
+
+export async function incrementWatiApiUsage({ endpoint = "", method = "GET" } = {}) {
+  const period = usagePeriod();
+  const safeKey = encodeURIComponent(
+    `${String(method || "GET").toUpperCase()} ${String(endpoint || "").replace(/\?.*$/, "")}`
+  );
+
+  const existing = await WatiApiSnapshot.findOne({ key: "usage" }).lean();
+  if (!existing?.data || existing.data.period !== period) {
+    await WatiApiSnapshot.findOneAndUpdate(
+      { key: "usage" },
+      {
+        $set: {
+          key: "usage",
+          data: {
+            period,
+            totalCalls: 1,
+            endpoints: { [safeKey]: 1 },
+            lastCallAt: new Date().toISOString(),
+          },
+          syncedAt: new Date(),
+        },
+      },
+      { upsert: true }
+    );
+    return;
+  }
+
+  await WatiApiSnapshot.findOneAndUpdate(
+    { key: "usage" },
+    {
+      $inc: {
+        "data.totalCalls": 1,
+        [`data.endpoints.${safeKey}`]: 1,
+      },
+      $set: {
+        "data.lastCallAt": new Date().toISOString(),
+        syncedAt: new Date(),
+      },
+    }
+  );
+}
+
+export async function readWatiApiUsage() {
+  const period = usagePeriod();
+  const doc = await WatiApiSnapshot.findOne({ key: "usage" }).lean();
+  if (!doc?.data || doc.data.period !== period) {
+    return {
+      period,
+      totalCalls: 0,
+      endpoints: {},
+      lastCallAt: null,
+    };
+  }
+  return {
+    period,
+    totalCalls: Number(doc.data.totalCalls) || 0,
+    endpoints: doc.data.endpoints || {},
+    lastCallAt: doc.data.lastCallAt || null,
+  };
+}

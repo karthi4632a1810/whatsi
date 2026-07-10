@@ -1,5 +1,6 @@
+import { useEffect, useMemo, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
-import { clearToken } from "../api.js";
+import { api, clearToken } from "../api.js";
 import {
   IconContacts,
   IconDashboard,
@@ -53,11 +54,44 @@ function pageTitle(pathname) {
 export default function Layout() {
   const navigate = useNavigate();
   const { pathname } = useLocation();
+  const [refreshes, setRefreshes] = useState([]);
 
   function logout() {
     clearToken();
     navigate("/login");
   }
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadActiveRefreshes() {
+      try {
+        const data = await api.hisActiveRefreshes();
+        if (!cancelled) {
+          setRefreshes(Array.isArray(data?.refreshes) ? data.refreshes : []);
+        }
+      } catch {
+        if (!cancelled) setRefreshes([]);
+      }
+    }
+
+    loadActiveRefreshes();
+    const intervalId = window.setInterval(loadActiveRefreshes, 5000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, []);
+
+  const refreshLabel = useMemo(() => {
+    if (!refreshes.length) return "";
+    if (refreshes.length > 1) return `HIS sync running · ${refreshes.length} days`;
+    const refresh = refreshes[0];
+    const done = refresh?.refreshProgress?.chunksDone ?? 0;
+    const total = refresh?.refreshProgress?.chunksTotal ?? 0;
+    const progress = total > 0 ? `${done}/${total}` : "starting";
+    return `HIS sync running · ${refresh.labDay} · ${progress}`;
+  }, [refreshes]);
 
   return (
     <div className="layout">
@@ -91,10 +125,18 @@ export default function Layout() {
             <p className="topbar-tag">Lab report delivery via WATI</p>
             <p className="topbar-page">{pageTitle(pathname)}</p>
           </div>
-          <button className="btn-ghost" onClick={logout} type="button">
-            <IconLogout className="btn-icon" />
-            Logout
-          </button>
+          <div className="topbar-actions">
+            {refreshLabel ? (
+              <span className="topbar-sync-indicator" role="status" aria-live="polite">
+                <span className="topbar-sync-dot" aria-hidden />
+                {refreshLabel}
+              </span>
+            ) : null}
+            <button className="btn-ghost" onClick={logout} type="button">
+              <IconLogout className="btn-icon" />
+              Logout
+            </button>
+          </div>
         </header>
         <main className="main">
           <Outlet />

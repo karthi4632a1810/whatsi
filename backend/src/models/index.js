@@ -67,9 +67,72 @@ const orderPdfMetaSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+const hisLabOrderSchema = new mongoose.Schema(
+  {
+    labDay: { type: String, required: true, index: true },
+    orderId: { type: String, required: true, index: true },
+    patientId: { type: String, default: "", index: true },
+    patientName: { type: String, default: "" },
+    phone: { type: String, default: "" },
+    department: { type: String, default: "" },
+    opIpType: { type: String, default: "UNKNOWN" },
+    opIpRaw: { type: String, default: "" },
+    hisStatus: { type: String, default: "" },
+    readiness: {
+      type: String,
+      enum: ["READY", "PARTIAL", "WAITING"],
+      default: "WAITING",
+      index: true,
+    },
+    procedureTotal: { type: Number, default: 0 },
+    approvedCount: { type: Number, default: 0 },
+    procIds: [{ type: Number }],
+    procedureNames: [{ type: String }],
+    procedures: [
+      {
+        name: String,
+        status: String,
+        procId: Number,
+        completedAt: Date,
+      },
+    ],
+    statusCounts: { type: mongoose.Schema.Types.Mixed, default: {} },
+    requestDate: { type: Date },
+    completedAt: { type: Date },
+    contentHash: { type: String, default: "" },
+    lastEmrSyncAt: { type: Date, default: Date.now },
+  },
+  { timestamps: true }
+);
+
+hisLabOrderSchema.index({ labDay: 1, orderId: 1 }, { unique: true });
+hisLabOrderSchema.index({ labDay: 1, readiness: 1 });
+
+const labBoardDaySchema = new mongoose.Schema(
+  {
+    labDay: { type: String, required: true, unique: true, index: true },
+    orderCount: { type: Number, default: 0 },
+    lastFullSyncAt: { type: Date },
+    lastIncrementalSyncAt: { type: Date },
+    refreshStatus: {
+      type: String,
+      enum: ["idle", "running", "done", "error"],
+      default: "idle",
+    },
+    refreshProgress: {
+      chunksDone: { type: Number, default: 0 },
+      chunksTotal: { type: Number, default: 0 },
+      orderCount: { type: Number, default: 0 },
+    },
+    refreshError: { type: String, default: "" },
+  },
+  { timestamps: true }
+);
+
 const automationSettingsSchema = new mongoose.Schema(
   {
     automationEnabled: { type: Boolean, default: false },
+    messageSendEnabled: { type: Boolean, default: false },
     mode: {
       type: String,
       enum: ["END_OF_DAY", "IMMEDIATE", "CUSTOM_SCHEDULE"],
@@ -150,6 +213,8 @@ const userSchema = new mongoose.Schema(
 export const Patient = mongoose.model("Patient", patientSchema);
 export const Report = mongoose.model("Report", reportSchema);
 export const OrderPdfMeta = mongoose.model("OrderPdfMeta", orderPdfMetaSchema);
+export const HisLabOrder = mongoose.model("HisLabOrder", hisLabOrderSchema);
+export const LabBoardDay = mongoose.model("LabBoardDay", labBoardDaySchema);
 export const AutomationSettings = mongoose.model("AutomationSettings", automationSettingsSchema);
 export const MessageLog = mongoose.model("MessageLog", messageLogSchema);
 export const WatiTemplate = mongoose.model("WatiTemplate", watiTemplateSchema);
@@ -157,7 +222,7 @@ export const User = mongoose.model("User", userSchema);
 
 const watiApiSnapshotSchema = new mongoose.Schema(
   {
-    key: { type: String, required: true, unique: true, enum: ["contacts", "connection"] },
+    key: { type: String, required: true, unique: true, enum: ["contacts", "connection", "usage"] },
     data: { type: mongoose.Schema.Types.Mixed, default: {} },
     syncedAt: { type: Date, default: Date.now },
   },

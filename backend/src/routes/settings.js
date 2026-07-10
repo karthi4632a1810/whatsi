@@ -15,6 +15,7 @@ router.put("/automation", async (req, res) => {
   const settings = await getSettings();
   const allowed = [
     "automationEnabled",
+    "messageSendEnabled",
     "mode",
     "endOfDayTime",
     "scope",
@@ -39,8 +40,7 @@ router.put("/automation", async (req, res) => {
 });
 
 router.get("/health", async (req, res) => {
-  const force = req.query.refresh === "true";
-  const wati = await testWatiConnection({ force });
+  const wati = await testWatiConnection();
   let emrAuth = { ok: false, method: "none" };
   if (config.emr.cookie) {
     emrAuth = { ok: true, method: "cookie" };
@@ -57,6 +57,7 @@ router.get("/health", async (req, res) => {
     ok: true,
     wati,
     watiSendEnabled: config.wati.sendEnabled,
+    messageSendEnabled: (await getSettings()).messageSendEnabled,
     emrPollEnabled: config.emr.pollEnabled,
     emrAuth,
     emrProcIdDiscovery: Boolean(emrAuth.ok),

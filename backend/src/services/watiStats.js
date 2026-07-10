@@ -2,6 +2,7 @@ import { MessageLog, Report } from "../models/index.js";
 import { testWatiConnection } from "./wati.js";
 import { config } from "../config.js";
 import { reportDayKey, startOfToday, endOfToday } from "../utils/dates.js";
+import { readWatiApiUsage } from "./watiCache.js";
 
 export async function getWatiOverview() {
   const today = reportDayKey();
@@ -17,6 +18,7 @@ export async function getWatiOverview() {
     sentAll,
     backlogDays,
     dailyRows,
+    apiUsage,
   ] = await Promise.all([
     testWatiConnection(),
     MessageLog.countDocuments({ status: "SENT", sentAt: { $gte: start, $lte: end } }),
@@ -42,6 +44,7 @@ export async function getWatiOverview() {
       { $sort: { "_id.day": -1 } },
       { $limit: 60 },
     ]),
+    readWatiApiUsage(),
   ]);
 
   const dailyMap = new Map();
@@ -84,6 +87,20 @@ export async function getWatiOverview() {
       sent: sentAll,
       failed: failedAll,
       pending: pendingAll,
+    },
+    apiUsage: {
+      period: apiUsage.period,
+      calls: apiUsage.totalCalls,
+      limit: config.wati.basicPlanApiLimit || null,
+      remaining:
+        config.wati.basicPlanApiLimit > 0
+          ? Math.max(config.wati.basicPlanApiLimit - apiUsage.totalCalls, 0)
+          : null,
+      percentUsed:
+        config.wati.basicPlanApiLimit > 0
+          ? Math.min(Math.round((apiUsage.totalCalls / config.wati.basicPlanApiLimit) * 100), 999)
+          : null,
+      lastCallAt: apiUsage.lastCallAt,
     },
     backlogByDay: backlogDays.map((r) => ({ day: r._id, count: r.count })),
     daily,

@@ -17,6 +17,18 @@ function sqlLiteral(value) {
   return `'${String(value ?? "").replace(/'/g, "''")}'`;
 }
 
+const SQL_INT_MAX = 2147483647;
+
+/** EMR @RequestNo maps to an int column — reject phones and out-of-range values. */
+export function looksLikeEmrOrderId(value) {
+  const s = String(value || "").trim();
+  if (!/^\d+$/.test(s)) return false;
+  const n = Number(s);
+  if (!Number.isFinite(n) || n <= 0 || n > SQL_INT_MAX) return false;
+  if (s.length === 10 && /^[6-9]/.test(s)) return false;
+  return true;
+}
+
 async function emrPost(url, body) {
   const headers = { "Content-Type": "application/json; charset=UTF-8" };
   if (config.emr.cookie) headers.Cookie = config.emr.cookie;
@@ -126,6 +138,7 @@ export async function fetchApprovedLabRows({ from, to, requestNo = "" }) {
 }
 
 export async function fetchOrderStatusRows(orderId, from, to) {
+  if (!looksLikeEmrOrderId(orderId)) return [];
   const fromDate = formatSqlDateTime(from, false);
   const toDate = formatSqlDateTime(to, true);
   const rows = await fetchQueryRows(
@@ -303,53 +316,64 @@ export async function fetchLabRowsForDay({ from, to, emrStatus = "0", requestNo 
     return fetchLabRowsRange({ from, to, emrStatus, requestNo: "", precise: false });
   }
 
-  try {
-    return await fetchLabRowsRange({ from, to, emrStatus, requestNo: "", precise: false });
-  } catch (error) {
-    if (!isEmrSqlTimeout(error.message) && error.code !== "EMR_SQL_TIMEOUT" && !error.emrSqlTimeout) {
-      throw error;
-    }
-    console.warn("[emr] full-day query timed out — loading in", config.emr.chunkHours, "hour chunks");
-  }
-
+  // Full-day queries time out on busy lab days (~30s SQL limit) — use time slices directly.
   return fetchLabRowsChunked({ from, to, emrStatus });
 }
 
-async function fetchLabRowsChunked({ from, to, emrStatus }) {
+async function fetchLabRowsChunkWithRetry(chunk, emrStatus) {
+  try {
+    return await fetchLabRowsRange({
+      from: chunk.from,
+      to: chunk.to,
+      emrStatus,
+      requestNo: "",
+      precise: true,
+    });
+  } catch (error) {
+    if (
+      (isEmrSqlTimeout(error.message) || error.code === "EMR_SQL_TIMEOUT" || error.emrSqlTimeout) &&
+      config.emr.chunkHours > 1
+    ) {
+      console.warn("[emr] chunk timed out — retrying with 1-hour slices");
+      const subChunks = buildDayTimeChunks(chunk.from, chunk.to, 1);
+      const subSeen = new Set();
+      const subMerged = [];
+      for (const sub of subChunks) {
+        const rows = await fetchLabRowsRange({
+          from: sub.from,
+          to: sub.to,
+          emrStatus,
+          requestNo: "",
+          precise: true,
+        });
+        mergeLabRows(subMerged, subSeen, rows);
+      }
+      return subMerged;
+    }
+    throw error;
+  }
+}
+
+async function fetchLabRowsChunked({ from, to, emrStatus, onChunk }) {
   const chunks = buildDayTimeChunks(from, to, config.emr.chunkHours);
+  if (!onChunk) {
+    console.log(`[emr] loading lab day in ${chunks.length} × ${config.emr.chunkHours}h chunks`);
+  }
   const seen = new Set();
   const merged = [];
 
-  for (const chunk of chunks) {
-    try {
-      const rows = await fetchLabRowsRange({
-        from: chunk.from,
-        to: chunk.to,
-        emrStatus,
-        requestNo: "",
-        precise: true,
+  for (let i = 0; i < chunks.length; i++) {
+    const chunk = chunks[i];
+    const rows = await fetchLabRowsChunkWithRetry(chunk, emrStatus);
+    mergeLabRows(merged, seen, rows);
+
+    if (onChunk) {
+      await onChunk({
+        chunkIndex: i + 1,
+        chunksTotal: chunks.length,
+        rows: merged,
+        chunkOrderIds: [...new Set(rows.map((r) => String(r.orderId)))],
       });
-      mergeLabRows(merged, seen, rows);
-    } catch (error) {
-      if (
-        (isEmrSqlTimeout(error.message) || error.code === "EMR_SQL_TIMEOUT" || error.emrSqlTimeout) &&
-        config.emr.chunkHours > 1
-      ) {
-        console.warn("[emr] chunk timed out — retrying with 1-hour slices");
-        const subChunks = buildDayTimeChunks(chunk.from, chunk.to, 1);
-        for (const sub of subChunks) {
-          const rows = await fetchLabRowsRange({
-            from: sub.from,
-            to: sub.to,
-            emrStatus,
-            requestNo: "",
-            precise: true,
-          });
-          mergeLabRows(merged, seen, rows);
-        }
-        continue;
-      }
-      throw error;
     }
   }
 
@@ -474,6 +498,39 @@ export async function fetchTodayLabBoard({ from, to, filter = "all" }) {
   });
 
   return board;
+}
+
+function sortLabBoard(board) {
+  board.sort((a, b) => {
+    const ta = a.completedAt?.getTime() || a.requestDate?.getTime() || 0;
+    const tb = b.completedAt?.getTime() || b.requestDate?.getTime() || 0;
+    return tb - ta;
+  });
+  return board;
+}
+
+/** Load EMR in time chunks; calls onChunk after each slice (for progressive UI). */
+export async function fetchTodayLabBoardProgressive({ from, to, onChunk }) {
+  const merged = await fetchLabRowsChunked({
+    from,
+    to,
+    emrStatus: "0",
+    onChunk: onChunk
+      ? async ({ chunkIndex, chunksTotal, rows, chunkOrderIds }) => {
+          const board = sortLabBoard(buildTodayLabBoard(rows));
+          const touched = board.filter((o) => chunkOrderIds.includes(String(o.orderId)));
+          await onChunk({
+            chunkIndex,
+            chunksTotal,
+            orders: board,
+            touchedOrders: touched,
+            orderCount: board.length,
+          });
+        }
+      : undefined,
+  });
+
+  return sortLabBoard(buildTodayLabBoard(merged));
 }
 
 export async function fetchLabBoardRange({ from, to, filter = "all", maxDays = 31 }) {

@@ -1,5 +1,4 @@
 import { WatiTemplate } from "../models/index.js";
-import { watiGet } from "./wati.js";
 
 function extractTemplateList(data) {
   if (Array.isArray(data?.messageTemplates)) return data.messageTemplates;
@@ -103,40 +102,9 @@ export async function deleteTemplate(id) {
 }
 
 export async function syncTemplatesFromWati() {
-  const result = await watiGet("api/v1/getMessageTemplates");
-  if (!result.response.ok) {
-    throw new Error(`WATI template sync failed (${result.response.status})`);
-  }
-
-  const remote = extractTemplateList(result.data);
-  let created = 0;
-  let updated = 0;
-
-  for (const item of remote) {
-    const mapped = mapWatiRemoteTemplate(item);
-    if (!mapped.name) continue;
-
-    const existing = await WatiTemplate.findOne({ name: mapped.name });
-    if (existing) {
-      existing.displayName = mapped.displayName;
-      existing.category = mapped.category;
-      existing.language = mapped.language;
-      existing.parameters = mapped.parameters;
-      existing.bodyPreview = mapped.bodyPreview;
-      existing.source = "WATI";
-      existing.watiStatus = mapped.watiStatus;
-      existing.lastSyncedAt = mapped.lastSyncedAt;
-      if (existing.status === "DRAFT") existing.status = mapped.status;
-      await existing.save();
-      updated += 1;
-    } else {
-      await WatiTemplate.create({ ...mapped, status: mapped.status });
-      created += 1;
-    }
-  }
-
-  const total = await WatiTemplate.countDocuments();
-  return { created, updated, remoteCount: remote.length, total };
+  throw new Error(
+    "Remote WATI template sync is disabled. Manage templates locally in this app — WATI API is only used when sending reports."
+  );
 }
 
 export async function ensureDefaultTemplate() {

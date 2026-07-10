@@ -97,10 +97,25 @@ export const api = {
     const q = new URLSearchParams(params).toString();
     return request(`/api/his/lab-today${q ? `?${q}` : ""}`);
   },
+  startHisBoardRefresh: (body = {}) =>
+    request("/api/his/lab-today/refresh", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  hisBoardRefreshStatus: (params = {}) => {
+    const q = new URLSearchParams(params).toString();
+    return request(`/api/his/lab-today/refresh-status${q ? `?${q}` : ""}`);
+  },
+  hisActiveRefreshes: () => request("/api/his/lab-today/active-refreshes"),
   hisLabSearch: (params = {}) => {
     const q = new URLSearchParams(params).toString();
     return request(`/api/his/lab-search${q ? `?${q}` : ""}`);
   },
+  refreshHisOrder: (orderId, body = {}) =>
+    request(`/api/his/lab-today/${encodeURIComponent(orderId)}/refresh`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
   syncOrderToQueue: (body) =>
     request("/api/reports/sync-order", {
       method: "POST",

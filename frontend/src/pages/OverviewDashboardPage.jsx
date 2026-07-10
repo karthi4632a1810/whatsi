@@ -38,6 +38,7 @@ const STAT_TONES = {
   synced: "synced",
   pending: "pending",
   sent: "sent",
+  test: "test",
   failed: "failed",
 };
 
@@ -176,12 +177,18 @@ export default function OverviewDashboardPage() {
     scope === "overall" ? "All time" : scope === "today" ? "Today" : formatDayLabel(activeDate);
   const hisTotal = hisLoading ? null : his?.total ?? 0;
   const queueTotal = loading ? null : queue.total ?? 0;
+  const hisReady = hisLoading ? null : his?.ready ?? 0;
+  const queueReady = loading ? null : queue.ready ?? 0;
   const showSyncGap =
     scope !== "overall" &&
     !hisLoading &&
     !loading &&
     hisTotal > 0 &&
     queueTotal === 0;
+  const readyGap =
+    scope !== "overall" && !hisLoading && !loading && hisReady > queueReady
+      ? hisReady - queueReady
+      : 0;
 
   return (
     <div className="dashboard-page">
@@ -202,7 +209,7 @@ export default function OverviewDashboardPage() {
               <span className="dashboard-hero-metric__value">
                 {hisLoading ? "…" : (his?.total ?? "—")}
               </span>
-              <span className="dashboard-hero-metric__source">Live from EMR</span>
+              <span className="dashboard-hero-metric__source">Server board</span>
             </div>
           ) : null}
           <div className="dashboard-hero-metric dashboard-hero-metric--queue">
@@ -286,6 +293,15 @@ export default function OverviewDashboardPage() {
         </div>
       ) : null}
 
+      {readyGap > 0 ? (
+        <div className="dashboard-sync-alert" role="status">
+          <strong>{hisReady} ready</strong> on the lab board but only <strong>{queueReady}</strong>{" "}
+          in the WhatsApp queue ({readyGap} waiting to sync). Use{" "}
+          <Link to="/his-lab-today">Sync to queue</Link> or wait for the next automation cycle
+          (~15 min).
+        </div>
+      ) : null}
+
       <div className="dashboard-panels">
         {scope !== "overall" ? (
           <section className="dashboard-panel dashboard-panel--emr" aria-labelledby="his-panel-title">
@@ -358,9 +374,9 @@ export default function OverviewDashboardPage() {
             </Link>
           </div>
           {loading ? (
-            <StatSkeletonGrid count={5} columns={5} />
+            <StatSkeletonGrid count={6} columns={6} />
           ) : (
-            <div className="cards dashboard-stat-grid dashboard-stat-grid--5">
+            <div className="cards dashboard-stat-grid dashboard-stat-grid--6">
               <StatBlock
                 label="Synced"
                 value={queue.total}
@@ -383,10 +399,17 @@ export default function OverviewDashboardPage() {
                 to="/reports"
               />
               <StatBlock
-                label="Sent"
+                label="Sent (patient)"
                 value={queue.sent}
-                hint={scope === "overall" ? "All time" : "This lab day"}
+                hint={scope === "overall" ? "Live delivery (all time)" : "Live delivery (this lab day)"}
                 tone="sent"
+                to="/messages"
+              />
+              <StatBlock
+                label="Test sent"
+                value={queue.testSent ?? 0}
+                hint={scope === "overall" ? "Test-mode sends (all time)" : "Test-mode sends (this lab day)"}
+                tone="test"
                 to="/messages"
               />
               <StatBlock
@@ -431,6 +454,7 @@ export default function OverviewDashboardPage() {
                 <th className="col-partial">Partial</th>
                 <th className="col-pending">Pending</th>
                 <th className="col-sent">Sent</th>
+                <th className="col-test">Test sent</th>
                 <th className="col-failed">Failed</th>
               </tr>
             </thead>
@@ -458,12 +482,13 @@ export default function OverviewDashboardPage() {
                     <td className="col-partial">{row.partial}</td>
                     <td className="col-pending">{row.pending}</td>
                     <td className="col-sent">{row.sent}</td>
+                    <td className="col-test">{row.testSent ?? 0}</td>
                     <td className="col-failed">{row.failed}</td>
                   </tr>
                 ))
               ) : (
                 <tr>
-                  <td colSpan={7} className="dashboard-table-empty">
+                  <td colSpan={8} className="dashboard-table-empty">
                     {loading ? "Loading queue history…" : "No synced reports yet"}
                   </td>
                 </tr>
@@ -476,13 +501,13 @@ export default function OverviewDashboardPage() {
       <footer className="dashboard-footer">
         <div className="dashboard-system-strip">
           <span className={`dashboard-system-dot ${health?.wati?.ok ? "ok" : "bad"}`} />
-          <span>WATI {health?.wati?.ok ? "connected" : "offline"}</span>
+          <span>WATI {health?.wati?.ok ? "configured" : "not configured"}</span>
           <span className="dashboard-system-sep">·</span>
-          <span>Send {health?.watiSendEnabled ? "enabled" : "disabled"}</span>
+          <span>Send {stats?.messageSendEnabled ? "enabled" : "disabled"}</span>
           <span className="dashboard-system-sep">·</span>
           <span>Test {stats?.watiTestSendMode ? "on" : "off"}</span>
           <span className="dashboard-system-sep">·</span>
-          <span>Automation {stats?.automationEnabled ? "on" : "off"}</span>
+          <span>Queue sync {stats?.automationEnabled ? "on" : "off"}</span>
         </div>
 
         <div className="dashboard-quick-grid">

@@ -62,6 +62,7 @@ export default function LabSearchPage() {
   const [orders, setOrders] = useState([]);
   const [summary, setSummary] = useState(null);
   const [daysLoaded, setDaysLoaded] = useState(0);
+  const [searchMeta, setSearchMeta] = useState(null);
   const [searched, setSearched] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -90,10 +91,17 @@ export default function LabSearchPage() {
       setOrders(data.orders || []);
       setSummary(data.summary || null);
       setDaysLoaded(data.daysLoaded || 0);
+      setSearchMeta({
+        source: data.source,
+        cachedDays: data.cachedDays,
+        emrDaysLoaded: data.emrDaysLoaded,
+        missingDays: data.missingDays,
+      });
     } catch (e) {
       setError(formatEmrError(e.message));
       setOrders([]);
       setSummary(null);
+      setSearchMeta(null);
     } finally {
       setLoading(false);
     }
@@ -179,7 +187,7 @@ export default function LabSearchPage() {
               />
             </label>
             <button className="primary" type="button" disabled={loading || !from || !to} onClick={runSearch}>
-              {loading ? "Searching EMR…" : "Search"}
+              {loading ? "Searching…" : "Search"}
             </button>
           </div>
           <div className="toolbar-row">
@@ -201,7 +209,11 @@ export default function LabSearchPage() {
             {searched && !loading ? (
               <span className="muted">
                 {summary?.totalOrders ?? filteredOrders.length} orders
-                {daysLoaded > 1 ? ` · ${daysLoaded} days scanned` : ""}
+                {daysLoaded > 1 ? ` · ${daysLoaded} days` : ""}
+                {searchMeta?.source === "mongodb" ? " · saved boards" : ""}
+                {searchMeta?.emrDaysLoaded
+                  ? ` · ${searchMeta.emrDaysLoaded} day(s) from EMR`
+                  : ""}
               </span>
             ) : null}
           </div>
@@ -209,12 +221,14 @@ export default function LabSearchPage() {
 
         {loading ? (
           <p className="muted" style={{ padding: "24px 0" }}>
-            Loading from EMR day by day — busy ranges may take several minutes…
+            {search.trim()
+              ? "Searching saved boards on the server…"
+              : "Searching saved boards, loading missing days from EMR if needed (2 days at a time)…"}
           </p>
         ) : !searched ? (
           <EmptyState
             title="Pick a date range and search"
-            body="Previous lab reports load from EMR only when you click Search. Then add the reports you need to the queue."
+            body="Searches saved HIS boards first (fast). EMR is only used for days not yet synced on HIS Lab Today."
           />
         ) : filteredOrders.length ? (
           <div className="table-wrap">

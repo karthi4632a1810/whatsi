@@ -42,20 +42,7 @@ export default function WatiTemplatesPage() {
     setEditingId(null);
   }
 
-  async function syncFromWati() {
-    setBusy(true);
-    setError("");
-    try {
-      await api.watiSyncTemplates();
-      await load();
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function saveTemplate(e) {
+  async function load() {
     e.preventDefault();
     setBusy(true);
     setError("");
@@ -108,23 +95,16 @@ export default function WatiTemplatesPage() {
       <PageHeader
         eyebrow="WATI templates"
         title="Template management"
-        lead="Register templates in MongoDB. Sync from WATI to import approved templates. Create maps to WATI template names used when sending."
+        lead="Register templates in MongoDB. The name must match the approved WATI template used when sending reports."
       />
 
       {error ? <p className="error" role="alert">{error}</p> : null}
 
       <div className="panel" style={{ marginBottom: 14 }}>
         <div className="toolbar">
-          <div className="toolbar-row toolbar-row--spread">
-            <p className="muted" style={{ margin: 0 }}>
-              Templates are stored in MongoDB and used for sends.
-            </p>
-            <div className="toolbar-actions toolbar-actions--inline">
-              <button type="button" className="secondary" disabled={busy} onClick={syncFromWati}>
-                Sync from WATI
-              </button>
-            </div>
-          </div>
+          <p className="muted" style={{ margin: 0 }}>
+            Templates are stored locally. WATI API is only called on send — add template names here manually.
+          </p>
         </div>
 
         <form className="template-form" onSubmit={saveTemplate}>
@@ -250,7 +230,7 @@ export default function WatiTemplatesPage() {
         ) : (
           <EmptyState
             title="No templates yet"
-            hint="Click Sync from WATI or create a template manually."
+            hint="Create a template manually — name must match your approved WATI template."
           />
         )}
       </div>

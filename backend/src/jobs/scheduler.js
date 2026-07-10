@@ -15,18 +15,18 @@ export function startScheduler() {
         const result = await runEmrPoll({
           autoSend: settings.mode === "IMMEDIATE",
         });
-        console.log("[cron] EMR poll done", result);
+        console.log("[cron] EMR poll done", result.boardRefresh || {}, result);
       } catch (error) {
         console.error("[cron] EMR poll failed", error.message);
       }
     });
-    console.log(`[cron] EMR poll scheduled: ${config.emr.pollCron} (runs only when automation is ON in Settings)`);
+    console.log(`[cron] EMR poll scheduled: ${config.emr.pollCron} (runs when queue sync is ON in Settings)`);
   }
 
   cron.schedule("* * * * *", async () => {
     try {
       const settings = await getSettings();
-      if (!settings.automationEnabled || settings.mode !== "END_OF_DAY" || settings.watiTestSendMode) return;
+      if (!settings.messageSendEnabled || settings.mode !== "END_OF_DAY" || settings.watiTestSendMode) return;
 
       const [hh, mm] = String(settings.endOfDayTime || "18:00").split(":").map(Number);
       const now = new Date();
@@ -45,7 +45,7 @@ export function startScheduler() {
   cron.schedule(config.automation.retryCron, async () => {
     try {
       const settings = await getSettings();
-      if (!settings.automationEnabled || settings.watiTestSendMode) return;
+      if (!settings.messageSendEnabled || settings.watiTestSendMode) return;
       const result = await sendPendingReports({ triggerType: "AUTO_EOD" });
       if (result.sent || result.failed) {
         console.log("[cron] retry pass", result);

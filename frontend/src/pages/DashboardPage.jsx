@@ -4,12 +4,6 @@ import { HisBadge } from "../components/Badge.jsx";
 import EmptyState from "../components/EmptyState.jsx";
 import PageHeader from "../components/PageHeader.jsx";
 import PdfPreviewModal from "../components/PdfPreviewModal.jsx";
-import {
-  HIS_CACHE_STALE_MS,
-  isHisCacheStale,
-  loadBoardFromCache,
-  mergeBoardIntoCache,
-} from "../lib/hisCache.js";
 import { applyHisFilter, computeHisSummary, filterHisOrders } from "../lib/hisFilters.js";
 import { formatEmrError } from "../lib/emrErrors.js";
 import { formatPatientName } from "../lib/format.js";
@@ -56,31 +50,54 @@ function WaBadge({ label, tone }) {
   return <span className={`badge wa-badge wa-badge--${tone}`}>{label}</span>;
 }
 
-function SyncBar({ fetchedAt, loadingEmr, filteredCount, totalCount, isPastDate }) {
+function SyncBar({ fetchedAt, loadingEmr, filteredCount, totalCount, isPastDate, source, refreshProgress }) {
   let dotClass = "sync-dot";
-  let label = "Not synced yet";
+  let label = "Board not loaded — refresh from HIS";
 
   if (loadingEmr) {
     dotClass += " sync-dot--pulse";
-    label = isPastDate
-      ? "Loading EMR in chunks (may take 1–2 min)…"
-      : "Fetching from EMR…";
+    const chunksDone = refreshProgress?.chunksDone || 0;
+    const chunksTotal = refreshProgress?.chunksTotal || 0;
+    const orderCount = refreshProgress?.orderCount || totalCount || 0;
+    if (chunksTotal > 0) {
+      label = `Loading HIS chunk ${chunksDone}/${chunksTotal} · ${orderCount} orders so far…`;
+    } else {
+      label = isPastDate
+        ? "Starting chunked HIS load (2-hour slices)…"
+        : "Starting chunked HIS load…";
+    }
   } else if (fetchedAt) {
-    const stale = isHisCacheStale(fetchedAt);
-    dotClass += stale ? " sync-dot--stale" : " sync-dot--live";
-    label = stale
-      ? `Cached · last synced ${formatSyncedAt(fetchedAt)} · refresh recommended`
-      : `Live cache · synced ${formatSyncedAt(fetchedAt)}`;
+    dotClass += " sync-dot--live";
+    const src = source === "emr" ? "HIS" : "server";
+    label = `${src} board · synced ${formatSyncedAt(fetchedAt)}`;
   }
 
+  const progressPct =
+    refreshProgress?.chunksTotal > 0
+      ? Math.round((refreshProgress.chunksDone / refreshProgress.chunksTotal) * 100)
+      : 0;
+
   return (
-    <div className="sync-bar" role="status" aria-live="polite">
-      <span className={dotClass} aria-hidden />
-      <span>{label}</span>
-      {totalCount > 0 && !loadingEmr ? (
-        <span>
-          · Showing <strong>{filteredCount}</strong> of <strong>{totalCount}</strong> orders
-        </span>
+    <div className="sync-bar-wrap">
+      <div className="sync-bar" role="status" aria-live="polite">
+        <span className={dotClass} aria-hidden />
+        <span>{label}</span>
+        {totalCount > 0 ? (
+          <span>
+            · Showing <strong>{filteredCount}</strong> of <strong>{totalCount}</strong> orders
+          </span>
+        ) : null}
+      </div>
+      {loadingEmr && refreshProgress?.chunksTotal > 0 ? (
+        <div
+          className="sync-bar-progress"
+          role="progressbar"
+          aria-valuenow={progressPct}
+          aria-valuemin={0}
+          aria-valuemax={100}
+        >
+          <div className="sync-bar-progress__fill" style={{ width: `${progressPct}%` }} />
+        </div>
       ) : null}
     </div>
   );
@@ -94,23 +111,21 @@ function SystemStatus({ health, stats }) {
       <h3 className="panel-title">System</h3>
       <div className="status-pills">
         <span className={`status-pill ${health?.wati?.ok ? "ok" : "bad"}`}>
-          WATI {health?.wati?.ok ? "connected" : "error"}
+          WATI {health?.wati?.ok ? "configured" : "not configured"}
         </span>
-        <span className={`status-pill ${health?.watiSendEnabled ? "warn" : "ok"}`}>
-          Send {health?.watiSendEnabled ? "enabled" : "disabled (safe)"}
+        <span className={`status-pill ${stats?.messageSendEnabled ? "warn" : "ok"}`}>
+          Send {stats?.messageSendEnabled ? "enabled" : "disabled (safe)"}
         </span>
         <span className={`status-pill ${health?.emrPollEnabled ? "ok" : "neutral"}`}>
           EMR poll {health?.emrPollEnabled ? "on" : "off"}
         </span>
         <span className={`status-pill ${stats?.automationEnabled ? "ok" : "neutral"}`}>
-          Automation {stats?.automationEnabled ? "on" : "off"}
+          Queue sync {stats?.automationEnabled ? "on" : "off"}
         </span>
         {stats?.endOfDayTime ? (
           <span className="status-pill neutral">EOD {stats.endOfDayTime}</span>
         ) : null}
-        <span className="status-pill neutral">
-          Cache {Math.round(HIS_CACHE_STALE_MS / 60000)} min
-        </span>
+        <span className="status-pill neutral">Board in MongoDB</span>
       </div>
     </div>
   );
@@ -155,6 +170,10 @@ export default function DashboardPage() {
   const [error, setError] = useState("");
   const [loadingCache, setLoadingCache] = useState(true);
   const [loadingEmr, setLoadingEmr] = useState(false);
+  const [syncingQueue, setSyncingQueue] = useState(false);
+  const [syncNotice, setSyncNotice] = useState("");
+  const [boardSource, setBoardSource] = useState("mongodb");
+  const [refreshProgress, setRefreshProgress] = useState(null);
   const [previewOrder, setPreviewOrder] = useState(null);
 
   const isToday = date === todayValue();
@@ -164,72 +183,77 @@ export default function DashboardPage() {
   );
   const summary = useMemo(() => computeHisSummary(allOrders), [allOrders]);
 
+  const loadFromServer = useCallback(async () => {
+    setError("");
+    setLoadingCache(true);
+    try {
+      const lab = await api.hisLabToday({ from: date, to: date });
+      setAllOrders(lab.orders || []);
+      setBoardSource(lab.source || "mongodb");
+      setFetchedAt(lab.lastSyncAt ? new Date(lab.lastSyncAt).getTime() : null);
+      if (lab.needsRefresh) {
+        setError("No board saved for this day yet — click Refresh from HIS once.");
+      }
+    } catch (e) {
+      setError(formatEmrError(e.message));
+    } finally {
+      setLoadingCache(false);
+    }
+  }, [date]);
+
   const refreshFromHis = useCallback(
     async ({ silent = false } = {}) => {
       setError("");
       if (!silent) setLoadingEmr(true);
-      try {
-        const lab = await api.hisLabToday({ from: date, to: date });
-        const merged = await mergeBoardIntoCache(date, lab.orders || []);
-        setAllOrders(merged.orders);
-        setFetchedAt(merged.fetchedAt);
+      setRefreshProgress({ chunksDone: 0, chunksTotal: 0, orderCount: 0 });
 
-        if (merged.changedOrderIds.length) {
-          setChangedIds(new Set(merged.changedOrderIds));
-          window.setTimeout(() => setChangedIds(new Set()), 3000);
+      try {
+        await api.startHisBoardRefresh({ date });
+
+        while (true) {
+          const [lab, status] = await Promise.all([
+            api.hisLabToday({ from: date, to: date }),
+            api.hisBoardRefreshStatus({ date }),
+          ]);
+
+          setAllOrders(lab.orders || []);
+          setBoardSource(lab.source || "mongodb");
+          setRefreshProgress(status.refreshProgress || null);
+          setFetchedAt(
+            lab.lastSyncAt ? new Date(lab.lastSyncAt).getTime() : Date.now()
+          );
+
+          if (status.refreshStatus !== "running") {
+            if (status.refreshStatus === "error") {
+              setError(formatEmrError(status.refreshError || "HIS refresh failed"));
+            }
+            break;
+          }
+
+          await new Promise((resolve) => window.setTimeout(resolve, 2000));
         }
       } catch (e) {
         setError(formatEmrError(e.message));
       } finally {
         if (!silent) setLoadingEmr(false);
+        setRefreshProgress(null);
       }
     },
     [date]
   );
 
   useEffect(() => {
-    let cancelled = false;
+    loadFromServer();
+  }, [loadFromServer]);
 
-    async function loadDate() {
-      setLoadingCache(true);
-      setError("");
-
-      let cachedOrders = [];
-      let cachedFetchedAt = null;
-
-      try {
-        const cached = await loadBoardFromCache(date);
-        if (cancelled) return;
-
-        if (cached?.orders?.length) {
-          cachedOrders = cached.orders;
-          cachedFetchedAt = cached.fetchedAt;
-          setAllOrders(cached.orders);
-          setFetchedAt(cached.fetchedAt);
-        } else {
-          setAllOrders([]);
-          setFetchedAt(null);
-        }
-      } catch (e) {
-        if (!cancelled) setError(formatEmrError(e.message));
-      } finally {
-        if (!cancelled) setLoadingCache(false);
-      }
-
-      if (cancelled) return;
-
-      const shouldRefresh =
-        !cachedFetchedAt || isHisCacheStale(cachedFetchedAt) || !cachedOrders.length;
-      if (shouldRefresh) {
-        refreshFromHis({ silent: Boolean(cachedOrders.length) });
-      }
-    }
-
-    loadDate();
-    return () => {
-      cancelled = true;
-    };
-  }, [date, refreshFromHis]);
+  useEffect(() => {
+    if (loadingEmr) return undefined;
+    const intervalId = window.setInterval(() => {
+      if (document.hidden) return;
+      loadFromServer();
+    }, 30000);
+    return () => window.clearInterval(intervalId);
+  }, [loadFromServer, loadingEmr]);
 
   useEffect(() => {
     api.stats().then(setStats).catch(() => {});
@@ -237,11 +261,22 @@ export default function DashboardPage() {
   }, []);
 
   async function syncQueue() {
+    setError("");
+    setSyncNotice("");
+    setSyncingQueue(true);
     try {
-      await api.pollEmr({ from: date, to: date });
-      await refreshFromHis();
+      const result = await api.pollEmr({ from: date, to: date });
+      const created = result.created ?? 0;
+      const updated = result.updated ?? 0;
+      const skipped = result.skipped ?? 0;
+      setSyncNotice(
+        `Queue sync for ${result.labDay || date}: ${created} added, ${updated} updated, ${skipped} skipped (${result.candidates ?? "—"} ready/partial on board).`
+      );
+      await refreshFromHis({ silent: true });
     } catch (e) {
       setError(e.message);
+    } finally {
+      setSyncingQueue(false);
     }
   }
 
@@ -254,11 +289,14 @@ export default function DashboardPage() {
         title={isToday ? "Today's lab reports" : `Lab reports · ${formatDisplayDate(date)}`}
         lead={
           <>
-            Completion status from EMR for <strong>{formatDisplayDate(date)}</strong>. Search
-            and status filters apply instantly from cache — use Refresh to pull new data from HIS.
+            Completion status from EMR for <strong>{formatDisplayDate(date)}</strong>. Loaded in
+            2-hour chunks — orders appear as each slice finishes. Filters work instantly from the
+            server board.
           </>
         }
       />
+
+      {syncNotice ? <p className="success-banner" role="status">{syncNotice}</p> : null}
 
       {error ? (
         <p className={allOrders.length ? "warn-banner" : "error"} role="alert">
@@ -269,7 +307,7 @@ export default function DashboardPage() {
         </p>
       ) : null}
 
-      <div className="cards">
+      <div className="cards cards--three">
         <div className="stat-card stat-card--orders">
           <h3>HIS orders</h3>
           <div className="value">{summary.totalOrders || "—"}</div>
@@ -281,10 +319,6 @@ export default function DashboardPage() {
         <div className="stat-card stat-card--ready">
           <h3>Ready to send</h3>
           <div className="value">{summary.ready || "—"}</div>
-        </div>
-        <div className="stat-card stat-card--sent">
-          <h3>WhatsApp sent</h3>
-          <div className="value">{summary.sent || stats?.sentToday || "—"}</div>
         </div>
       </div>
 
@@ -338,8 +372,13 @@ export default function DashboardPage() {
               <button type="button" onClick={() => refreshFromHis()} disabled={loadingEmr}>
                 {loadingEmr ? "Refreshing…" : "Refresh from HIS"}
               </button>
-              <button className="secondary" type="button" onClick={syncQueue}>
-                Sync to queue
+              <button
+                className="secondary"
+                type="button"
+                disabled={syncingQueue || loadingEmr}
+                onClick={syncQueue}
+              >
+                {syncingQueue ? "Syncing…" : "Sync to queue"}
               </button>
             </div>
           </div>
@@ -351,6 +390,8 @@ export default function DashboardPage() {
           filteredCount={filteredOrders.length}
           totalCount={allOrders.length}
           isPastDate={!isToday}
+          source={boardSource}
+          refreshProgress={refreshProgress}
         />
 
         {showTableLoading ? (

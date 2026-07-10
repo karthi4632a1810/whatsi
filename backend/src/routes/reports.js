@@ -13,11 +13,33 @@ import {
   syncOrderToQueue,
 } from "../services/reports.js";
 import { parseLabReportUrl } from "../utils/labReportUrl.js";
-import { fetchTodayLabBoard, fetchLabBoardRange, buildLabReportUrl, isPlausibleProcIds } from "../services/emr.js";
+import { fetchTodayLabBoard, buildLabReportUrl, isPlausibleProcIds } from "../services/emr.js";
 import { reportDayKey, startOfToday, endOfToday, parseQueryDate } from "../utils/dates.js";
 import { deriveWhatsappDisplay } from "../utils/whatsappDisplay.js";
+import {
+  getStoredBoard,
+  getLabBoardMeta,
+  refreshBoardFromEmr,
+  refreshOrderFromEmr,
+  applyBoardFilter,
+  summarizeBoardOrders,
+  startBoardRefresh,
+  getBoardRefreshStatus,
+  getActiveBoardRefreshes,
+  searchLabBoardRange,
+} from "../services/hisBoardStore.js";
 
 const router = express.Router();
+
+function latestSyncAt(meta) {
+  if (!meta) return null;
+  const full = meta.lastFullSyncAt ? new Date(meta.lastFullSyncAt).getTime() : 0;
+  const incremental = meta.lastIncrementalSyncAt
+    ? new Date(meta.lastIncrementalSyncAt).getTime()
+    : 0;
+  const ts = Math.max(full, incremental);
+  return ts ? new Date(ts) : null;
+}
 
 router.get("/stats", async (req, res) => {
   const scope = String(req.query.scope || "today").toLowerCase();
@@ -43,20 +65,93 @@ router.get("/his/lab-today", async (req, res) => {
     const filter = String(req.query.filter || "all").toLowerCase();
     const from = req.query.from ? parseQueryDate(req.query.from, false) : startOfToday();
     const to = req.query.to ? parseQueryDate(req.query.to, true) : endOfToday();
-
-    const orders = await fetchTodayLabBoard({ from, to, filter });
     const day = reportDayKey(from);
-    const enriched = await enrichHisOrders(orders);
+    const refresh = req.query.refresh === "true";
 
+    if (refresh) {
+      startBoardRefresh(day);
+    }
+
+    let orders = await getStoredBoard(day, "all");
+    const meta = await getLabBoardMeta(day);
+    const refreshStatus = await getBoardRefreshStatus(day);
+
+    if (!orders.length && !refresh && refreshStatus.refreshStatus !== "running") {
+      return res.json({
+        date: day,
+        filter,
+        summary: summarizeBoardOrders([]),
+        orders: [],
+        source: "mongodb",
+        needsRefresh: true,
+        lastSyncAt: null,
+        refreshStatus: refreshStatus.refreshStatus,
+        refreshProgress: refreshStatus.refreshProgress,
+      });
+    }
+
+    orders = applyBoardFilter(orders, filter);
+    const enriched = await enrichHisOrders(orders);
     const summary = buildHisSummary(enriched);
 
-    res.json({ date: day, filter, summary, orders: enriched });
+    res.json({
+      date: day,
+      filter,
+      summary,
+      orders: enriched,
+      source: refreshStatus.refreshStatus === "running" ? "emr" : "mongodb",
+      needsRefresh: false,
+      lastSyncAt: latestSyncAt(meta),
+      refreshStatus: refreshStatus.refreshStatus,
+      refreshProgress: refreshStatus.refreshProgress,
+      refreshError: refreshStatus.refreshError || "",
+    });
   } catch (error) {
     const status = error.code === "EMR_SQL_TIMEOUT" ? 503 : 500;
     res.status(status).json({
       error: error.message,
       code: error.code || "EMR_ERROR",
     });
+  }
+});
+
+router.post("/his/lab-today/refresh", async (req, res) => {
+  try {
+    const day = req.body?.date
+      ? reportDayKey(parseQueryDate(req.body.date, false))
+      : reportDayKey();
+    const result = startBoardRefresh(day);
+    const status = await getBoardRefreshStatus(day);
+    res.json({ ...result, ...status });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+router.get("/his/lab-today/refresh-status", async (req, res) => {
+  const day = req.query.date
+    ? reportDayKey(parseQueryDate(req.query.date, false))
+    : reportDayKey();
+  res.json(await getBoardRefreshStatus(day));
+});
+
+router.get("/his/lab-today/active-refreshes", async (_req, res) => {
+  res.json({ refreshes: await getActiveBoardRefreshes() });
+});
+
+router.post("/his/lab-today/:orderId/refresh", async (req, res) => {
+  try {
+    const orderId = String(req.params.orderId || "").trim();
+    const day = req.body?.date
+      ? reportDayKey(parseQueryDate(req.body.date, false))
+      : reportDayKey();
+    const result = await refreshOrderFromEmr(day, orderId);
+    const doc = await getStoredBoard(day, "all");
+    const order = doc.find((o) => String(o.orderId) === orderId);
+    const enriched = order ? (await enrichHisOrders([order]))[0] : null;
+    res.json({ ...result, labDay: day, order: enriched });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
   }
 });
 
@@ -69,17 +164,20 @@ router.get("/his/lab-search", async (req, res) => {
       return res.status(400).json({ error: "from and to dates are required (YYYY-MM-DD)" });
     }
 
-    const from = parseQueryDate(fromRaw, false);
-    const to = parseQueryDate(toRaw, true);
-    const { days, orders } = await fetchLabBoardRange({ from, to, filter });
-    const filtered = filterOrdersSearch(orders, req.query.q);
+    const q = String(req.query.q || "").trim();
+    const result = await searchLabBoardRange({ fromRaw, toRaw, filter, q });
+    const filtered = filterOrdersSearch(result.orders, q);
     const enriched = await enrichHisOrders(filtered);
     const summary = buildHisSummary(enriched);
 
     res.json({
       from: fromRaw,
       to: toRaw,
-      daysLoaded: days.length,
+      daysLoaded: result.daysLoaded,
+      cachedDays: result.cachedDays,
+      missingDays: result.missingDays,
+      emrDaysLoaded: result.emrDaysLoaded,
+      source: result.source,
       filter,
       summary,
       orders: enriched,
@@ -365,7 +463,7 @@ router.get("/reports/:id", async (req, res) => {
 router.post("/reports/poll", async (req, res) => {
   const from = req.body?.from ? parseQueryDate(req.body.from, false) : undefined;
   const to = req.body?.to ? parseQueryDate(req.body.to, true) : undefined;
-  const result = await runEmrPoll({ from, to });
+  const result = await runEmrPoll({ from, to, manual: true });
   res.json(result);
 });
 
@@ -394,9 +492,9 @@ router.post("/reports/bulk-send", async (req, res) => {
 
 router.post("/reports/send-all-pending", async (_req, res) => {
   const settings = await getSettings();
-  if (!settings.automationEnabled) {
+  if (!settings.messageSendEnabled) {
     return res.status(400).json({
-      error: "Automation is disabled — enable it in Settings to send pending reports",
+      error: "Message sending is disabled — enable it in Settings",
     });
   }
   if (settings.watiTestSendMode) {
