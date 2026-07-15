@@ -1,25 +1,63 @@
 import { config } from "../config.js";
 
-export function formatSqlDateTime(date, endOfDay = false) {
+const IST = "Asia/Kolkata";
+
+function pad(n, width = 2) {
+  return String(n).padStart(width, "0");
+}
+
+/** Calendar/clock parts in India Standard Time (independent of server TZ). */
+export function partsInIst(date = new Date()) {
   const dt = date instanceof Date ? date : new Date(date);
-  const mm = String(dt.getMonth() + 1).padStart(2, "0");
-  const dd = String(dt.getDate()).padStart(2, "0");
-  const yyyy = dt.getFullYear();
+  const fmt = new Intl.DateTimeFormat("en-GB", {
+    timeZone: IST,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  });
+  const parts = Object.fromEntries(
+    fmt
+      .formatToParts(dt)
+      .filter((p) => p.type !== "literal")
+      .map((p) => [p.type, p.value])
+  );
+  return {
+    year: Number(parts.year),
+    month: Number(parts.month),
+    day: Number(parts.day),
+    hour: Number(parts.hour),
+    minute: Number(parts.minute),
+    second: Number(parts.second),
+  };
+}
+
+/** Build a Date from an EMR / hospital wall-clock time in IST. */
+export function dateFromIstParts(year, month, day, hour = 0, minute = 0, second = 0, ms = 0) {
+  const iso = `${year}-${pad(month)}-${pad(day)}T${pad(hour)}:${pad(minute)}:${pad(second)}.${pad(ms, 3)}+05:30`;
+  const t = Date.parse(iso);
+  return Number.isFinite(t) ? new Date(t) : null;
+}
+
+export function formatSqlDateTime(date, endOfDay = false) {
+  const p = partsInIst(date instanceof Date ? date : new Date(date));
   const calendar =
-    config.emr.sqlDateOrder === "dmy" ? `${dd}/${mm}/${yyyy}` : `${mm}/${dd}/${yyyy}`;
+    config.emr.sqlDateOrder === "dmy"
+      ? `${pad(p.day)}/${pad(p.month)}/${p.year}`
+      : `${pad(p.month)}/${pad(p.day)}/${p.year}`;
   return endOfDay ? `${calendar} 23:59` : `${calendar} 00:00`;
 }
 
 export function formatSqlDateTimeValue(date) {
-  const dt = date instanceof Date ? date : new Date(date);
-  const mm = String(dt.getMonth() + 1).padStart(2, "0");
-  const dd = String(dt.getDate()).padStart(2, "0");
-  const yyyy = dt.getFullYear();
-  const hh = String(dt.getHours()).padStart(2, "0");
-  const min = String(dt.getMinutes()).padStart(2, "0");
+  const p = partsInIst(date instanceof Date ? date : new Date(date));
   const calendar =
-    config.emr.sqlDateOrder === "dmy" ? `${dd}/${mm}/${yyyy}` : `${mm}/${dd}/${yyyy}`;
-  return `${calendar} ${hh}:${min}`;
+    config.emr.sqlDateOrder === "dmy"
+      ? `${pad(p.day)}/${pad(p.month)}/${p.year}`
+      : `${pad(p.month)}/${pad(p.day)}/${p.year}`;
+  return `${calendar} ${pad(p.hour)}:${pad(p.minute)}`;
 }
 
 export function buildDayTimeChunks(from, to, hoursPerChunk = 2) {
@@ -31,17 +69,12 @@ export function buildDayTimeChunks(from, to, hoursPerChunk = 2) {
 
   while (cursor.getTime() <= end.getTime()) {
     const chunkStart = new Date(cursor);
-    const chunkEnd = new Date(cursor);
-    chunkEnd.setHours(chunkEnd.getHours() + hours);
-    chunkEnd.setMinutes(chunkEnd.getMinutes() - 1);
-    chunkEnd.setSeconds(59, 999);
+    const chunkEnd = new Date(cursor.getTime() + hours * 60 * 60 * 1000 - 1);
 
     const effectiveEnd = chunkEnd.getTime() > end.getTime() ? new Date(end) : chunkEnd;
     chunks.push({ from: chunkStart, to: effectiveEnd });
 
-    cursor = new Date(effectiveEnd);
-    cursor.setMinutes(cursor.getMinutes() + 1);
-    cursor.setSeconds(0, 0);
+    cursor = new Date(effectiveEnd.getTime() + 1);
   }
 
   return chunks;
@@ -53,40 +86,89 @@ export function spanHours(from, to) {
 }
 
 export function reportDayKey(date = new Date()) {
-  const dt = date instanceof Date ? date : new Date(date);
-  const yyyy = dt.getFullYear();
-  const mm = String(dt.getMonth() + 1).padStart(2, "0");
-  const dd = String(dt.getDate()).padStart(2, "0");
-  return `${yyyy}-${mm}-${dd}`;
+  const p = partsInIst(date instanceof Date ? date : new Date(date));
+  return `${p.year}-${pad(p.month)}-${pad(p.day)}`;
 }
 
+/**
+ * EMR COMPLETED/REQUEST dates are hospital local time (IST), with no timezone.
+ * Always interpret them as Asia/Kolkata — Docker UTC servers otherwise show +5:30.
+ */
 export function parseEmrDate(value) {
   const raw = String(value || "").trim();
   if (!raw) return null;
-  const dmy = raw.match(/^(\d{2})-(\d{2})-(\d{4})(?:\s+(\d{2}):(\d{2}))?/);
-  if (dmy) {
-    const day = Number(dmy[1]);
-    const month = Number(dmy[2]) - 1;
-    const year = Number(dmy[3]);
-    const hour = Number(dmy[4] || 0);
-    const minute = Number(dmy[5] || 0);
-    const dt = new Date(year, month, day, hour, minute);
-    return Number.isNaN(dt.getTime()) ? null : dt;
+
+  // dd-mm-yyyy[ HH:mm[:ss]]
+  const dmyDash = raw.match(/^(\d{2})-(\d{2})-(\d{4})(?:\s+(\d{2}):(\d{2})(?::(\d{2}))?)?$/);
+  if (dmyDash) {
+    return dateFromIstParts(
+      Number(dmyDash[3]),
+      Number(dmyDash[2]),
+      Number(dmyDash[1]),
+      Number(dmyDash[4] || 0),
+      Number(dmyDash[5] || 0),
+      Number(dmyDash[6] || 0)
+    );
   }
+
+  // dd/mm/yyyy[ HH:mm[:ss]]
+  const dmySlash = raw.match(/^(\d{2})\/(\d{2})\/(\d{4})(?:\s+(\d{2}):(\d{2})(?::(\d{2}))?)?$/);
+  if (dmySlash && config.emr.sqlDateOrder === "dmy") {
+    return dateFromIstParts(
+      Number(dmySlash[3]),
+      Number(dmySlash[2]),
+      Number(dmySlash[1]),
+      Number(dmySlash[4] || 0),
+      Number(dmySlash[5] || 0),
+      Number(dmySlash[6] || 0)
+    );
+  }
+
+  // mm/dd/yyyy[ HH:mm[:ss]] (EMR mdy mode)
+  const mdySlash = raw.match(/^(\d{2})\/(\d{2})\/(\d{4})(?:\s+(\d{2}):(\d{2})(?::(\d{2}))?)?$/);
+  if (mdySlash) {
+    return dateFromIstParts(
+      Number(mdySlash[3]),
+      Number(mdySlash[1]),
+      Number(mdySlash[2]),
+      Number(mdySlash[4] || 0),
+      Number(mdySlash[5] || 0),
+      Number(mdySlash[6] || 0)
+    );
+  }
+
+  // yyyy-mm-dd[ HH:mm[:ss]] or ISO without Z — treat as IST wall clock
+  const ymd = raw.match(
+    /^(\d{4})-(\d{2})-(\d{2})(?:[T\s](\d{2}):(\d{2})(?::(\d{2}))?)?(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?$/
+  );
+  if (ymd) {
+    const hasTz = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(raw);
+    if (hasTz) {
+      const t = Date.parse(raw);
+      return Number.isFinite(t) ? new Date(t) : null;
+    }
+    return dateFromIstParts(
+      Number(ymd[1]),
+      Number(ymd[2]),
+      Number(ymd[3]),
+      Number(ymd[4] || 0),
+      Number(ymd[5] || 0),
+      Number(ymd[6] || 0)
+    );
+  }
+
   const t = Date.parse(raw);
   return Number.isFinite(t) ? new Date(t) : null;
 }
 
 export function startOfToday() {
-  const d = new Date();
-  d.setHours(0, 0, 0, 0);
-  return d;
+  const p = partsInIst(new Date());
+  return dateFromIstParts(p.year, p.month, p.day, 0, 0, 0, 0);
 }
 
 export function endOfToday() {
-  const d = new Date();
-  d.setHours(23, 59, 59, 999);
-  return d;
+  const p = partsInIst(new Date());
+  return dateFromIstParts(p.year, p.month, p.day, 23, 59, 59, 999);
 }
 
 export function toInputDateValue(date = new Date()) {
@@ -99,11 +181,11 @@ export function parseQueryDate(value, endOfDay = false) {
   const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (match) {
     const year = Number(match[1]);
-    const month = Number(match[2]) - 1;
+    const month = Number(match[2]);
     const day = Number(match[3]);
     return endOfDay
-      ? new Date(year, month, day, 23, 59, 59, 999)
-      : new Date(year, month, day, 0, 0, 0, 0);
+      ? dateFromIstParts(year, month, day, 23, 59, 59, 999)
+      : dateFromIstParts(year, month, day, 0, 0, 0, 0);
   }
   const parsed = new Date(raw);
   return Number.isNaN(parsed.getTime()) ? null : parsed;
@@ -119,10 +201,14 @@ export function enumerateDays(from, to) {
   if (!start || !end || start > end) return [];
 
   const days = [];
-  const cursor = new Date(start);
-  while (cursor.getTime() <= end.getTime()) {
-    days.push(reportDayKey(cursor));
-    cursor.setDate(cursor.getDate() + 1);
+  let cursor = reportDayKey(start);
+  const last = reportDayKey(end);
+  while (cursor <= last) {
+    days.push(cursor);
+    const p = cursor.split("-").map(Number);
+    const next = dateFromIstParts(p[0], p[1], p[2], 12, 0, 0, 0);
+    next.setUTCDate(next.getUTCDate() + 1);
+    cursor = reportDayKey(next);
   }
   return days;
 }

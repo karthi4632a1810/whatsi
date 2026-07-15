@@ -29,6 +29,7 @@ services:
     environment:
       PORT: "5001"
       MONGODB_URI: mongodb://mongo:27017/whatsi
+      TZ: Asia/Kolkata
     dns:
       - 8.8.8.8
       - 1.1.1.1
