@@ -579,8 +579,12 @@ export async function sendPendingReports({
   triggerType = "AUTO_EOD",
   reportIds = null,
   testContactPhones = null,
+  statuses = null,
 } = {}) {
-  const query = { status: { $in: ["PENDING", "FAILED"] } };
+  const statusList = Array.isArray(statuses) && statuses.length
+    ? statuses
+    : ["PENDING", "FAILED"];
+  const query = { status: { $in: statusList } };
   if (reportIds?.length) query._id = { $in: reportIds };
 
   const reports = await Report.find(query).sort({ reportReadyAt: 1 });

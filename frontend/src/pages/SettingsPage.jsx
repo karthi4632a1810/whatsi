@@ -177,20 +177,32 @@ export default function SettingsPage() {
                 disabled={!settings.messageSendEnabled}
                 onChange={(e) => update("mode", e.target.value)}
               >
-                <option value="END_OF_DAY">End of day</option>
+                <option value="END_OF_DAY">End of day (recommended)</option>
                 <option value="IMMEDIATE">Immediate (after each HIS poll)</option>
               </select>
             </label>
             <label className="field-label">
-              End of day time
+              End of day time (IST)
               <input
                 type="time"
-                disabled={!settings.messageSendEnabled}
+                disabled={!settings.messageSendEnabled || settings.mode === "IMMEDIATE"}
                 value={settings.endOfDayTime || "18:00"}
                 onChange={(e) => update("endOfDayTime", e.target.value)}
               />
             </label>
           </div>
+          {settings.mode === "END_OF_DAY" || settings.mode === "CUSTOM_SCHEDULE" ? (
+            <p className="field-hint">
+              Pending reports stay in the queue and send automatically once at{" "}
+              <strong>{settings.endOfDayTime || "18:00"}</strong> India time. Failed sends may be
+              retried after that time. Manual send from the queue still works anytime.
+            </p>
+          ) : (
+            <p className="field-hint field-hint--warn">
+              Immediate mode sends after each HIS poll. Switch to <strong>End of day</strong> to wait
+              for the schedule.
+            </p>
+          )}
         </section>
 
         <section className="panel settings-section">
