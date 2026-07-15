@@ -1,3 +1,7 @@
+# Mongo data lives on the host at ./data/mongo — rebuilds and
+# `docker compose down` do NOT wipe it. Only delete that folder if you
+# intentionally want a fresh database.
+
 services:
   mongo:
     image: mongo:7
@@ -5,7 +9,8 @@ services:
     ports:
       - "3002:27017"
     volumes:
-      - mongo_data:/data/db
+      # Host bind mount = safe across rebuild / recreate / down
+      - ./data/mongo:/data/db
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
@@ -40,6 +45,3 @@ services:
     depends_on:
       - backend
     restart: unless-stopped
-
-volumes:
-  mongo_data:
