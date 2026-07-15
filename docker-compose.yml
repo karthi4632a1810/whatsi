@@ -1,0 +1,45 @@
+services:
+  mongo:
+    image: mongo:7
+    container_name: whatsi-mongo
+    ports:
+      - "3002:27017"
+    volumes:
+      - mongo_data:/data/db
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: whatsi-backend
+    ports:
+      - "2002:5001"
+    env_file:
+      - .env
+    environment:
+      PORT: "5001"
+      MONGODB_URI: mongodb://mongo:27017/whatsi
+    depends_on:
+      mongo:
+        condition: service_healthy
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: whatsi-frontend
+    ports:
+      - "1002:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  mongo_data:
