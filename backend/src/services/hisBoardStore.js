@@ -359,7 +359,7 @@ export async function refreshBoardFromEmr(labDay, { mode = "full" } = {}) {
 
   if (mode === "incremental") {
     const meta = await getLabBoardMeta(day);
-    if (!meta?.lastFullSyncAt) {
+    if (!meta?.lastFullSyncAt && !meta?.orderCount) {
       if (!activeBoardRefreshes.has(day)) {
         startBoardRefresh(day);
       }
@@ -370,24 +370,18 @@ export async function refreshBoardFromEmr(labDay, { mode = "full" } = {}) {
       };
     }
 
-    const incomplete = await HisLabOrder.find({
-      labDay: day,
-      readiness: { $in: ["WAITING", "PARTIAL"] },
-    })
-      .select("orderId")
-      .lean();
+    // Pull the full day from HIS so NEW orders appear and READY/PARTIAL updates apply.
+    // (Old incremental only re-polled WAITING/PARTIAL ids — new rows never showed up.)
+    const beforeIds = new Set(
+      (await HisLabOrder.find({ labDay: day }).select("orderId").lean()).map((d) =>
+        String(d.orderId)
+      )
+    );
 
-    const outcomes = await runPool(incomplete, async ({ orderId }) => {
-      try {
-        return await refreshOrderFromEmr(day, orderId);
-      } catch (error) {
-        return { orderId, error: error.message };
-      }
-    });
+    const orders = await fetchTodayLabBoard({ from, to, filter: "all" });
+    const save = await saveBoardFromEmr(day, orders);
 
-    const updated = outcomes.filter((o) => o?.changed && !o?.error).length;
-    const errors = outcomes.filter((o) => o?.error).length;
-    const unchanged = outcomes.length - updated - errors;
+    const added = orders.filter((o) => !beforeIds.has(String(o.orderId))).length;
 
     await LabBoardDay.findOneAndUpdate(
       { labDay: day },
@@ -398,10 +392,12 @@ export async function refreshBoardFromEmr(labDay, { mode = "full" } = {}) {
     return {
       mode: "incremental",
       labDay: day,
-      polled: incomplete.length,
-      updated,
-      unchanged,
-      errors,
+      polled: orders.length,
+      added,
+      updated: save.changed,
+      unchanged: save.unchanged,
+      orderCount: orders.length,
+      errors: 0,
     };
   }
 

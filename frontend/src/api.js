@@ -102,6 +102,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+  softHisBoardRefresh: (body = {}) =>
+    request("/api/his/lab-today/soft-refresh", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
   hisBoardRefreshStatus: (params = {}) => {
     const q = new URLSearchParams(params).toString();
     return request(`/api/his/lab-today/refresh-status${q ? `?${q}` : ""}`);

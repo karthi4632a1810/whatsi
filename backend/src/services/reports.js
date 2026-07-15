@@ -403,8 +403,28 @@ export async function sendReportById(
       throw new Error("Report is partial — not all procedures approved");
     }
   }
-  if (!report.hisReportUrl) {
-    throw new Error("Missing PDF URL — proc IDs not resolved for this order");
+
+  // Same resolution path as PDF preview — queue rows often lack hisReportUrl until first resolve
+  if (!report.hisReportUrl || !isPlausibleProcIds(report.procIds)) {
+    const resolved = await resolveOrderPdfUrl(report.reportId, {
+      procIds: report.procIds || [],
+    });
+    if (!resolved.pdfUrl) {
+      throw new Error(
+        "Missing PDF URL — procedure IDs not resolved from EMR yet. Open Preview once, or try again shortly."
+      );
+    }
+    report.hisReportUrl = resolved.pdfUrl;
+    if (resolved.procIds?.length) {
+      report.procIds = resolved.procIds;
+    }
+    await report.save();
+    await upsertOrderPdfMeta(report.reportId, {
+      patientId: report.patientId,
+      procIds: report.procIds,
+      hisReportUrl: report.hisReportUrl,
+      source: resolved.source || "SEND",
+    }).catch(() => {});
   }
 
   const settings = await getSettings();

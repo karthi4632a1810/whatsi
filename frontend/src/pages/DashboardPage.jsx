@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api.js";
 import { HisBadge } from "../components/Badge.jsx";
 import EmptyState from "../components/EmptyState.jsx";
@@ -40,6 +40,33 @@ function formatSyncedAt(value) {
     hour: "numeric",
     minute: "2-digit",
   });
+}
+
+function orderFingerprint(order) {
+  return [
+    order.orderId,
+    order.readiness,
+    order.hisStatus,
+    order.approvedCount,
+    order.procedureTotal,
+    order.waTone || "",
+    order.waLabel || "",
+    order.phone || "",
+    order.completedAt || "",
+  ].join("|");
+}
+
+function diffChangedOrderIds(prevOrders, nextOrders) {
+  const prevMap = new Map((prevOrders || []).map((o) => [String(o.orderId), orderFingerprint(o)]));
+  const changed = [];
+  for (const order of nextOrders || []) {
+    const id = String(order.orderId);
+    const nextFp = orderFingerprint(order);
+    if (!prevMap.has(id) || prevMap.get(id) !== nextFp) {
+      changed.push(id);
+    }
+  }
+  return changed;
 }
 
 
@@ -175,6 +202,9 @@ export default function DashboardPage() {
   const [boardSource, setBoardSource] = useState("mongodb");
   const [refreshProgress, setRefreshProgress] = useState(null);
   const [previewOrder, setPreviewOrder] = useState(null);
+  const ordersRef = useRef([]);
+  const highlightTimerRef = useRef(null);
+  const softRefreshBusyRef = useRef(false);
 
   const isToday = date === todayValue();
   const filteredOrders = useMemo(
@@ -183,23 +213,39 @@ export default function DashboardPage() {
   );
   const summary = useMemo(() => computeHisSummary(allOrders), [allOrders]);
 
-  const loadFromServer = useCallback(async () => {
-    setError("");
-    setLoadingCache(true);
+  const applyOrders = useCallback((orders, { highlight = true } = {}) => {
+    const next = orders || [];
+    if (highlight && ordersRef.current.length) {
+      const changed = diffChangedOrderIds(ordersRef.current, next);
+      if (changed.length) {
+        setChangedIds(new Set(changed));
+        if (highlightTimerRef.current) window.clearTimeout(highlightTimerRef.current);
+        highlightTimerRef.current = window.setTimeout(() => setChangedIds(new Set()), 4000);
+      }
+    }
+    ordersRef.current = next;
+    setAllOrders(next);
+  }, []);
+
+  const loadFromServer = useCallback(async ({ quiet = false } = {}) => {
+    if (!quiet) {
+      setError("");
+      setLoadingCache(true);
+    }
     try {
       const lab = await api.hisLabToday({ from: date, to: date });
-      setAllOrders(lab.orders || []);
+      applyOrders(lab.orders || [], { highlight: quiet });
       setBoardSource(lab.source || "mongodb");
       setFetchedAt(lab.lastSyncAt ? new Date(lab.lastSyncAt).getTime() : null);
-      if (lab.needsRefresh) {
+      if (lab.needsRefresh && !quiet) {
         setError("No board saved for this day yet — click Refresh from HIS once.");
       }
     } catch (e) {
-      setError(formatEmrError(e.message));
+      if (!quiet) setError(formatEmrError(e.message));
     } finally {
-      setLoadingCache(false);
+      if (!quiet) setLoadingCache(false);
     }
-  }, [date]);
+  }, [date, applyOrders]);
 
   const refreshFromHis = useCallback(
     async ({ silent = false } = {}) => {
@@ -216,7 +262,7 @@ export default function DashboardPage() {
             api.hisBoardRefreshStatus({ date }),
           ]);
 
-          setAllOrders(lab.orders || []);
+          applyOrders(lab.orders || [], { highlight: silent });
           setBoardSource(lab.source || "mongodb");
           setRefreshProgress(status.refreshProgress || null);
           setFetchedAt(
@@ -239,21 +285,55 @@ export default function DashboardPage() {
         setRefreshProgress(null);
       }
     },
-    [date]
+    [date, applyOrders]
   );
 
   useEffect(() => {
+    ordersRef.current = [];
+    setChangedIds(new Set());
     loadFromServer();
   }, [loadFromServer]);
 
+  // Reload board often so queue/WhatsApp status updates show quickly
   useEffect(() => {
     if (loadingEmr) return undefined;
     const intervalId = window.setInterval(() => {
       if (document.hidden) return;
-      loadFromServer();
-    }, 30000);
+      loadFromServer({ quiet: true });
+    }, 12000);
     return () => window.clearInterval(intervalId);
   }, [loadFromServer, loadingEmr]);
+
+  // Soft pull from HIS so NEW / changed rows appear without clicking Refresh
+  useEffect(() => {
+    if (loadingEmr || !isToday) return undefined;
+
+    async function softPull() {
+      if (document.hidden || softRefreshBusyRef.current || loadingEmr) return;
+      softRefreshBusyRef.current = true;
+      try {
+        await api.softHisBoardRefresh({ date });
+        await loadFromServer({ quiet: true });
+      } catch {
+        // Keep board as-is; next tick retries
+      } finally {
+        softRefreshBusyRef.current = false;
+      }
+    }
+
+    const intervalId = window.setInterval(softPull, 90000);
+    const firstId = window.setTimeout(softPull, 15000);
+    return () => {
+      window.clearInterval(intervalId);
+      window.clearTimeout(firstId);
+    };
+  }, [date, isToday, loadFromServer, loadingEmr]);
+
+  useEffect(() => {
+    return () => {
+      if (highlightTimerRef.current) window.clearTimeout(highlightTimerRef.current);
+    };
+  }, []);
 
   useEffect(() => {
     api.stats().then(setStats).catch(() => {});

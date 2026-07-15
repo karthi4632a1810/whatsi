@@ -8,6 +8,22 @@ import WatiTestSendModal from "../components/WatiTestSendModal.jsx";
 import { formatPatientName } from "../lib/format.js";
 import { displayPhone } from "../lib/phone.js";
 
+function todayValue() {
+  const d = new Date();
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function formatSyncedAt(value) {
+  if (!value) return null;
+  return new Date(value).toLocaleTimeString("en-IN", {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
 function queueStatus(report, testSendMode) {
   if (testSendMode) return report.status;
   if (report.status === "SENT" && report.lastAttempt?.testSend) return "PENDING";
@@ -80,6 +96,8 @@ const STATUS_OPTIONS = [
 export default function ReportsPage() {
   const [reports, setReports] = useState([]);
   const [settings, setSettings] = useState(null);
+  const [stats, setStats] = useState(null);
+  const [lastSyncAt, setLastSyncAt] = useState(null);
   const [status, setStatus] = useState("");
   const [q, setQ] = useState("");
   const [selected, setSelected] = useState(new Set());
@@ -91,6 +109,7 @@ export default function ReportsPage() {
 
   const testSendMode = Boolean(settings?.watiTestSendMode);
   const testPhones = settings?.watiTestContactPhones || [];
+  const queue = stats?.queue || {};
 
   const contactMap = useMemo(() => new Map(), []);
 
@@ -108,6 +127,16 @@ export default function ReportsPage() {
     [testPhones, contactMap]
   );
 
+  async function loadDashboard() {
+    const day = todayValue();
+    const [statsData, lab] = await Promise.all([
+      api.stats({ scope: "day", date: day }).catch(() => null),
+      api.hisLabToday({ from: day, to: day }).catch(() => null),
+    ]);
+    if (statsData) setStats(statsData);
+    setLastSyncAt(lab?.lastSyncAt ? new Date(lab.lastSyncAt).getTime() : null);
+  }
+
   async function load() {
     setLoading(true);
     try {
@@ -116,6 +145,7 @@ export default function ReportsPage() {
       if (q) params.q = q;
       const data = await api.reports(params);
       setReports(data.reports || []);
+      await loadDashboard();
     } finally {
       setLoading(false);
     }
@@ -125,6 +155,14 @@ export default function ReportsPage() {
     load().catch((e) => setError(e.message));
     api.settings().then((d) => setSettings(d.settings)).catch(() => {});
   }, [status]);
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      if (document.hidden) return;
+      loadDashboard().catch(() => {});
+    }, 20000);
+    return () => window.clearInterval(intervalId);
+  }, []);
 
   function toggle(id) {
     setSelected((prev) => {
@@ -219,6 +257,63 @@ export default function ReportsPage() {
         title="WhatsApp send queue"
         lead="Reports synced from HIS and queued for delivery. For live EMR status, use HIS Lab Today."
       />
+
+      <div className={`cards cards--queue-dash${testSendMode ? " cards--queue-dash-test" : ""}`}>
+        <div className="stat-card stat-card--synced">
+          <h3>Total in queue</h3>
+          <div className="value">{queue.total ?? "—"}</div>
+          <p className="stat-hint">Synced reports · today</p>
+        </div>
+        <div className="stat-card stat-card--ready">
+          <h3>Pending</h3>
+          <div className="value">{queue.pending ?? "—"}</div>
+          <p className="stat-hint">Waiting to send</p>
+        </div>
+        <div className="stat-card stat-card--sent">
+          <h3>Sent</h3>
+          <div className="value">{queue.sent ?? "—"}</div>
+          <p className="stat-hint">Patient sends · today</p>
+        </div>
+        {testSendMode ? (
+          <div className="stat-card stat-card--orders">
+            <h3>Test sent</h3>
+            <div className="value">{queue.testSent ?? "—"}</div>
+            <p className="stat-hint">Test mode only · today</p>
+          </div>
+        ) : null}
+        <div className="stat-card stat-card--approved">
+          <h3>Failed</h3>
+          <div className="value">{queue.failed ?? "—"}</div>
+          <p className="stat-hint">Need retry</p>
+        </div>
+        <div className="stat-card stat-card--partial">
+          <h3>Last synced</h3>
+          <div className="value value--time">
+            {lastSyncAt ? formatSyncedAt(lastSyncAt) : "—"}
+          </div>
+          <p className="stat-hint">HIS board · today</p>
+        </div>
+      </div>
+
+      <div className="sync-bar-wrap" style={{ marginBottom: 14 }}>
+        <div className="sync-bar" role="status">
+          <span className={`sync-dot${lastSyncAt ? " sync-dot--live" : ""}`} aria-hidden />
+          <span>
+            {lastSyncAt
+              ? `Queue dashboard · HIS last synced ${formatSyncedAt(lastSyncAt)}`
+              : "Queue dashboard · HIS sync time unavailable"}
+          </span>
+          {queue.total != null ? (
+            <span>
+              · <strong>{queue.pending ?? 0}</strong> pending of <strong>{queue.total}</strong> today
+            </span>
+          ) : null}
+          {stats?.messageSendEnabled === false ? (
+            <span className="muted"> · Send disabled in Settings</span>
+          ) : null}
+          {testSendMode ? <span className="muted"> · Test send mode ON</span> : null}
+        </div>
+      </div>
 
       {testSendMode ? (
         <div className="test-send-banner" role="status">

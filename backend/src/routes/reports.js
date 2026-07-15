@@ -128,6 +128,28 @@ router.post("/his/lab-today/refresh", async (req, res) => {
   }
 });
 
+/** Quiet HIS pull — picks up new/changed rows without progressive UI. */
+router.post("/his/lab-today/soft-refresh", async (req, res) => {
+  try {
+    const day = req.body?.date
+      ? reportDayKey(parseQueryDate(req.body.date, false))
+      : reportDayKey();
+    const status = await getBoardRefreshStatus(day);
+    if (status.refreshStatus === "running") {
+      return res.json({
+        skipped: true,
+        reason: "full refresh already running",
+        ...status,
+      });
+    }
+    const result = await refreshBoardFromEmr(day, { mode: "incremental" });
+    res.json(result);
+  } catch (error) {
+    const statusCode = error.code === "EMR_SQL_TIMEOUT" ? 503 : 400;
+    res.status(statusCode).json({ error: error.message, code: error.code || "EMR_ERROR" });
+  }
+});
+
 router.get("/his/lab-today/refresh-status", async (req, res) => {
   const day = req.query.date
     ? reportDayKey(parseQueryDate(req.query.date, false))

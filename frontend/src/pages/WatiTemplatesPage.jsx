@@ -42,7 +42,7 @@ export default function WatiTemplatesPage() {
     setEditingId(null);
   }
 
-  async function load() {
+  async function saveTemplate(e) {
     e.preventDefault();
     setBusy(true);
     setError("");
