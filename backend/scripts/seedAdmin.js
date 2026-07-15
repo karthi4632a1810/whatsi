@@ -9,7 +9,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
 dotenv.config({ path: path.join(root, ".env") });
 
 const email = process.env.ADMIN_EMAIL || "admin@mapims.edu.in";
-const password = process.env.ADMIN_PASSWORD || "admin123";
+const password = process.env.ADMIN_PASSWORD || "adminwatic";
 const uri = process.env.MONGODB_URI || "mongodb://localhost:27017/whatsi";
 
 await mongoose.connect(uri);

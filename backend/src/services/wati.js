@@ -34,23 +34,46 @@ function assertWatiJsonResponse(result, action) {
   }
 }
 
+function formatWatiNetworkError(error, action) {
+  const cause = error?.cause;
+  const detail =
+    cause?.code ||
+    cause?.message ||
+    (typeof cause === "string" ? cause : "") ||
+    error?.message ||
+    "unknown network error";
+  return `WATI ${action} failed: ${detail}. Check that this server/container can reach ${config.wati.baseUrl}`;
+}
+
+async function watiFetch(url, options, action) {
+  try {
+    return await fetch(url, options);
+  } catch (error) {
+    throw new Error(formatWatiNetworkError(error, action));
+  }
+}
+
 export async function watiGet(endpoint, params = {}) {
   const url = new URL(`${config.wati.baseUrl}/${endpoint.replace(/^\//, "")}`);
   Object.entries(params).forEach(([key, value]) => {
     if (value !== undefined && value !== null) url.searchParams.set(key, String(value));
   });
-  const response = await fetch(url, { headers: headers() });
+  const response = await watiFetch(url, { headers: headers() }, "GET");
   return parseResponse(response);
 }
 
 async function watiPost(endpoint, payload, query = {}) {
   const url = new URL(`${config.wati.baseUrl}/${endpoint.replace(/^\//, "")}`);
   Object.entries(query).forEach(([key, value]) => url.searchParams.set(key, String(value)));
-  const response = await fetch(url, {
-    method: "POST",
-    headers: headers(),
-    body: JSON.stringify(payload),
-  });
+  const response = await watiFetch(
+    url,
+    {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify(payload),
+    },
+    "send"
+  );
   return parseResponse(response);
 }
 

@@ -98,7 +98,7 @@ export default function ReportsPage() {
     () =>
       testPhones.map((phone) => {
         const contact = contactMap.get(phone);
-        return contact || { phone, name: phone };
+        return contact || { phone, name: displayPhone(phone) || phone };
       }),
     [testPhones, contactMap]
   );
