@@ -17,7 +17,13 @@ import {
 import { canSendToPhone, sendLabReportMessage } from "./wati.js";
 import { getOrderPdfMeta, upsertOrderPdfMeta } from "./orderPdfMeta.js";
 import { normalizePhone } from "../utils/phone.js";
-import { reportDayKey, startOfToday, endOfToday, parseQueryDate } from "../utils/dates.js";
+import {
+  reportDayKey,
+  startOfToday,
+  endOfToday,
+  parseQueryDate,
+  recentLabDays,
+} from "../utils/dates.js";
 import { config } from "../config.js";
 import {
   getStoredBoard,
@@ -315,6 +321,55 @@ export async function runEmrPoll({ from, to, autoSend = false, manual = false } 
   }
 
   return { ...sync, boardRefresh };
+}
+
+/**
+ * Catch late completions for recent past days.
+ * Example: order dated 15 Jul that becomes READY on 17 Jul gets board-updated + queued.
+ * Does not send — EOD / Immediate schedule still controls WhatsApp.
+ */
+export async function runBacklogCatchUp({
+  lookbackDays = config.emr.backlogLookbackDays,
+} = {}) {
+  const days = recentLabDays(lookbackDays, { includeToday: false });
+  const results = [];
+
+  for (const labDay of days) {
+    try {
+      const from = parseQueryDate(labDay, false);
+      const to = parseQueryDate(labDay, true);
+      const boardRefresh = await refreshBoardFromEmr(labDay, { mode: "incremental" });
+      // Skip queue sync if this day never had a full board yet (chunked refresh just started)
+      if (boardRefresh?.mode === "chunked-started") {
+        results.push({ labDay, boardRefresh, skipped: true, reason: "full refresh started" });
+        continue;
+      }
+      const sync = await syncLabBoardToQueue({
+        from,
+        to,
+        manual: false,
+        useStore: true,
+      });
+      results.push({
+        labDay,
+        boardRefresh,
+        created: sync.created ?? 0,
+        updated: sync.updated ?? 0,
+        skipped: sync.skipped ?? 0,
+        candidates: sync.candidates ?? 0,
+      });
+    } catch (error) {
+      results.push({ labDay, error: error.message });
+    }
+  }
+
+  return {
+    lookbackDays,
+    days,
+    results,
+    created: results.reduce((n, r) => n + (r.created || 0), 0),
+    updated: results.reduce((n, r) => n + (r.updated || 0), 0),
+  };
 }
 
 export async function resolveOrderPdfUrl(orderId, { procIds: hintProcIds = [] } = {}) {

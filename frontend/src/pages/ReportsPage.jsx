@@ -24,6 +24,17 @@ function formatSyncedAt(value) {
   });
 }
 
+function formatDisplayDate(value) {
+  if (!value) return "today";
+  const [y, m, d] = value.split("-").map(Number);
+  if (!y || !m || !d) return value;
+  return new Date(y, m - 1, d).toLocaleDateString("en-IN", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+}
+
 function queueStatus(report, testSendMode) {
   if (testSendMode) return report.status;
   if (report.status === "SENT" && report.lastAttempt?.testSend) return "PENDING";
@@ -98,6 +109,7 @@ export default function ReportsPage() {
   const [settings, setSettings] = useState(null);
   const [stats, setStats] = useState(null);
   const [lastSyncAt, setLastSyncAt] = useState(null);
+  const [date, setDate] = useState(todayValue);
   const [status, setStatus] = useState("");
   const [q, setQ] = useState("");
   const [selected, setSelected] = useState(new Set());
@@ -110,6 +122,8 @@ export default function ReportsPage() {
   const testSendMode = Boolean(settings?.watiTestSendMode);
   const testPhones = settings?.watiTestContactPhones || [];
   const queue = stats?.queue || {};
+  const isToday = date === todayValue();
+  const dayLabel = isToday ? "today" : formatDisplayDate(date);
 
   const contactMap = useMemo(() => new Map(), []);
 
@@ -127,8 +141,8 @@ export default function ReportsPage() {
     [testPhones, contactMap]
   );
 
-  async function loadDashboard() {
-    const day = todayValue();
+  async function loadDashboard(forDay = date) {
+    const day = forDay || todayValue();
     const [statsData, lab] = await Promise.all([
       api.stats({ scope: "day", date: day }).catch(() => null),
       api.hisLabToday({ from: day, to: day }).catch(() => null),
@@ -139,13 +153,14 @@ export default function ReportsPage() {
 
   async function load() {
     setLoading(true);
+    setSelected(new Set());
     try {
-      const params = {};
+      const params = { reportDay: date };
       if (status) params.status = status;
       if (q) params.q = q;
       const data = await api.reports(params);
       setReports(data.reports || []);
-      await loadDashboard();
+      await loadDashboard(date);
     } finally {
       setLoading(false);
     }
@@ -154,15 +169,15 @@ export default function ReportsPage() {
   useEffect(() => {
     load().catch((e) => setError(e.message));
     api.settings().then((d) => setSettings(d.settings)).catch(() => {});
-  }, [status]);
+  }, [status, date]);
 
   useEffect(() => {
     const intervalId = window.setInterval(() => {
       if (document.hidden) return;
-      loadDashboard().catch(() => {});
+      loadDashboard(date).catch(() => {});
     }, 20000);
     return () => window.clearInterval(intervalId);
-  }, []);
+  }, [date]);
 
   function toggle(id) {
     setSelected((prev) => {
@@ -254,15 +269,15 @@ export default function ReportsPage() {
     <div>
       <PageHeader
         eyebrow="Outbound queue"
-        title="WhatsApp send queue"
-        lead="Reports synced from HIS and queued for delivery. For live EMR status, use HIS Lab Today."
+        title={isToday ? "WhatsApp send queue" : `WhatsApp queue · ${formatDisplayDate(date)}`}
+        lead={`Reports synced from HIS for ${formatDisplayDate(date)}. Change the date to review backlog from earlier lab days.`}
       />
 
       <div className={`cards cards--queue-dash${testSendMode ? " cards--queue-dash-test" : ""}`}>
         <div className="stat-card stat-card--synced">
           <h3>Total in queue</h3>
           <div className="value">{queue.total ?? "—"}</div>
-          <p className="stat-hint">Synced reports · today</p>
+          <p className="stat-hint">Synced reports · {dayLabel}</p>
         </div>
         <div className="stat-card stat-card--ready">
           <h3>Pending</h3>
@@ -272,13 +287,13 @@ export default function ReportsPage() {
         <div className="stat-card stat-card--sent">
           <h3>Sent</h3>
           <div className="value">{queue.sent ?? "—"}</div>
-          <p className="stat-hint">Patient sends · today</p>
+          <p className="stat-hint">Patient sends · {dayLabel}</p>
         </div>
         {testSendMode ? (
           <div className="stat-card stat-card--orders">
             <h3>Test sent</h3>
             <div className="value">{queue.testSent ?? "—"}</div>
-            <p className="stat-hint">Test mode only · today</p>
+            <p className="stat-hint">Test mode only · {dayLabel}</p>
           </div>
         ) : null}
         <div className="stat-card stat-card--approved">
@@ -291,7 +306,7 @@ export default function ReportsPage() {
           <div className="value value--time">
             {lastSyncAt ? formatSyncedAt(lastSyncAt) : "—"}
           </div>
-          <p className="stat-hint">HIS board · today</p>
+          <p className="stat-hint">HIS board · {dayLabel}</p>
         </div>
       </div>
 
@@ -300,12 +315,13 @@ export default function ReportsPage() {
           <span className={`sync-dot${lastSyncAt ? " sync-dot--live" : ""}`} aria-hidden />
           <span>
             {lastSyncAt
-              ? `Queue dashboard · HIS last synced ${formatSyncedAt(lastSyncAt)}`
-              : "Queue dashboard · HIS sync time unavailable"}
+              ? `Queue · ${formatDisplayDate(date)} · HIS last synced ${formatSyncedAt(lastSyncAt)}`
+              : `Queue · ${formatDisplayDate(date)} · HIS sync time unavailable`}
           </span>
           {queue.total != null ? (
             <span>
-              · <strong>{queue.pending ?? 0}</strong> pending of <strong>{queue.total}</strong> today
+              · <strong>{queue.pending ?? 0}</strong> pending of <strong>{queue.total}</strong>{" "}
+              {dayLabel}
             </span>
           ) : null}
           {stats?.messageSendEnabled === false ? (
@@ -331,6 +347,21 @@ export default function ReportsPage() {
       <div className="panel">
         <div className="toolbar">
           <div className="toolbar-row toolbar-row--spread">
+            <label className="field-label">
+              Lab day
+              <input
+                type="date"
+                value={date}
+                max={todayValue()}
+                onChange={(e) => setDate(e.target.value || todayValue())}
+                aria-label="Filter queue by lab day"
+              />
+            </label>
+            {!isToday ? (
+              <button type="button" className="secondary" onClick={() => setDate(todayValue())}>
+                Today
+              </button>
+            ) : null}
             <label className="field-label field-label--grow">
               Search
               <input
@@ -507,8 +538,8 @@ export default function ReportsPage() {
           </div>
         ) : (
           <EmptyState
-            title="No reports in queue"
-            hint="Sync from HIS Lab Today to add reports for WhatsApp delivery."
+            title="No reports for this day"
+            hint={`Nothing in the WhatsApp queue for ${formatDisplayDate(date)}. Pick another lab day, or sync from HIS Lab Today.`}
           />
         )}
       </div>

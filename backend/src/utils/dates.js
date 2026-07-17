@@ -212,3 +212,26 @@ export function enumerateDays(from, to) {
   }
   return days;
 }
+
+/** Shift a YYYY-MM-DD day key by N calendar days in IST. */
+export function addIstDays(dayKey, deltaDays) {
+  const base = parseQueryDate(dayKey || reportDayKey(), false);
+  if (!base) return reportDayKey();
+  const shifted = new Date(base.getTime() + Number(deltaDays || 0) * 24 * 60 * 60 * 1000);
+  return reportDayKey(shifted);
+}
+
+/**
+ * Recent lab days to catch late completions (excludes today).
+ * Example: lookbackDays=3 on 17 Jul → ["2026-07-14","2026-07-15","2026-07-16"]
+ */
+export function recentLabDays(lookbackDays = 3, { includeToday = false } = {}) {
+  const today = reportDayKey();
+  const n = Math.max(0, Number(lookbackDays) || 0);
+  const days = [];
+  for (let i = n; i >= 1; i -= 1) {
+    days.push(addIstDays(today, -i));
+  }
+  if (includeToday) days.push(today);
+  return days;
+}

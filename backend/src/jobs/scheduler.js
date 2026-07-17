@@ -1,6 +1,11 @@
 import cron from "node-cron";
 import { config } from "../config.js";
-import { getSettings, runEmrPoll, sendPendingReports } from "../services/reports.js";
+import {
+  getSettings,
+  runEmrPoll,
+  runBacklogCatchUp,
+  sendPendingReports,
+} from "../services/reports.js";
 import { partsInIst, reportDayKey } from "../utils/dates.js";
 
 let lastEodRunKey = "";
@@ -29,22 +34,51 @@ export function startScheduler() {
         const settings = await getSettings();
         if (!settings.automationEnabled) return;
 
-        // Sync board → queue only. Sends only when Mode = Immediate.
-        console.log("[cron] EMR poll start");
-        const result = await runEmrPoll({
+        // 1) Today: refresh board + sync READY → queue
+        console.log("[cron] EMR poll start (today)");
+        const todayResult = await runEmrPoll({
           autoSend: settings.mode === "IMMEDIATE",
         });
-        console.log("[cron] EMR poll done", result.boardRefresh || {}, result);
+        console.log("[cron] EMR poll done (today)", todayResult.boardRefresh || {}, {
+          created: todayResult.created,
+          updated: todayResult.updated,
+          candidates: todayResult.candidates,
+        });
+
+        // 2) Past N days: catch late completions (e.g. 15 Jul order ready on 17 Jul)
+        const lookback = config.emr.backlogLookbackDays;
+        if (lookback > 0) {
+          console.log(`[cron] backlog catch-up start (last ${lookback} days)`);
+          const backlog = await runBacklogCatchUp({ lookbackDays: lookback });
+          console.log("[cron] backlog catch-up done", {
+            days: backlog.days,
+            created: backlog.created,
+            updated: backlog.updated,
+          });
+
+          // Immediate mode: also send anything newly queued from backlog
+          if (
+            settings.mode === "IMMEDIATE" &&
+            settings.messageSendEnabled &&
+            !settings.watiTestSendMode &&
+            (backlog.created > 0 || backlog.updated > 0)
+          ) {
+            const sendResult = await sendPendingReports({ triggerType: "AUTO_IMMEDIATE" });
+            console.log("[cron] backlog immediate send", sendResult);
+          }
+        }
       } catch (error) {
         console.error("[cron] EMR poll failed", error.message);
       }
     });
     console.log(
-      `[cron] EMR poll scheduled: ${config.emr.pollCron} (queue sync when Automation is ON)`
+      `[cron] EMR poll scheduled: ${config.emr.pollCron} (today + ${config.emr.backlogLookbackDays} day backlog when Automation is ON)`
     );
   }
 
   // End-of-day send — India time, once per day at the configured clock
+  // Sends ALL pending queue rows (any reportDay), so late 15 Jul READY items
+  // synced on 17 Jul go out at 17 Jul's EOD time.
   cron.schedule("* * * * *", async () => {
     try {
       const settings = await getSettings();

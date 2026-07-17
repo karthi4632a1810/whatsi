@@ -46,6 +46,8 @@ export const config = {
     httpRetries: Number(process.env.EMR_HTTP_RETRIES) || 1,
     chunkHours: Number(process.env.EMR_CHUNK_HOURS) || 2,
     chunkEnabled: process.env.EMR_CHUNK_ENABLED !== "false",
+    // How many past days to re-check for late READY completions (excludes today)
+    backlogLookbackDays: Number(process.env.EMR_BACKLOG_LOOKBACK_DAYS) || 3,
   },
   automation: {
     eodCron: process.env.EOD_CRON || "0 18 * * *",
