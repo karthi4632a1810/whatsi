@@ -107,6 +107,12 @@ export function extractProcIdsFromHtmlDocument(html) {
   return [...procIds];
 }
 
+export const EXCLUDED_PATIENT_TYPES = ["ZPATIENT"];
+
+export function isExcludedPatientType(patientType) {
+  return EXCLUDED_PATIENT_TYPES.includes(String(patientType || "").toUpperCase().trim());
+}
+
 export function parseOpIpType(value) {
   const raw = String(value || "").toUpperCase();
   if (raw.includes(" IP")) return "IP";

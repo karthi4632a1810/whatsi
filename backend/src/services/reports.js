@@ -15,6 +15,7 @@ import {
   fetchTodayLabBoard,
 } from "./emr.js";
 import { canSendToPhone, sendLabReportMessage } from "./wati.js";
+import { isExcludedPatientType } from "../utils/emrParse.js";
 import { getOrderPdfMeta, upsertOrderPdfMeta } from "./orderPdfMeta.js";
 import { normalizePhone } from "../utils/phone.js";
 import {
@@ -58,6 +59,7 @@ function orderHasNewTests(existing, snapshot) {
 }
 
 function shouldSyncSnapshot(settings, snapshot, existing, { manual = false } = {}) {
+  if (isExcludedPatientType(snapshot.patientType)) return false;
   if (!scopeMatches(settings, snapshot.opIpType)) return false;
   if (snapshot.readiness === "WAITING") return false;
 
@@ -113,6 +115,7 @@ export async function syncPatientsAndReports(snapshots, { manual = false } = {})
         name: snapshot.patientName,
         phone: snapshot.phone,
         opIpType: snapshot.opIpType,
+        patientType: snapshot.patientType || "",
         department: snapshot.department,
         lastSyncedAt: new Date(),
       },
@@ -145,6 +148,7 @@ export async function syncPatientsAndReports(snapshots, { manual = false } = {})
       patientName: snapshot.patientName,
       phone: effectivePhone(patient, snapshot.phone),
       opIpType: snapshot.opIpType,
+      patientType: snapshot.patientType || "",
       department: snapshot.department,
       procIds: snapshot.procIds,
       procedureNames: snapshot.procedureNames,
@@ -212,6 +216,7 @@ export function boardOrderToSnapshot(order, labDay) {
     patientName: order.patientName || "",
     phone: order.phone || "",
     opIpType: order.opIpType || "UNKNOWN",
+    patientType: order.patientType || "",
     department: order.department || "",
     readiness: order.readiness,
     procIds,
@@ -448,6 +453,10 @@ export async function sendReportById(
 ) {
   const report = await Report.findById(reportId).populate("patientRef");
   if (!report) throw new Error("Report not found");
+
+  if (isExcludedPatientType(report.patientType)) {
+    throw new Error("Send blocked: patient type ZPATIENT is excluded from WhatsApp delivery");
+  }
 
   if (!force && report.readiness === "WAITING") {
     throw new Error("Report is not ready (no approved procedures)");

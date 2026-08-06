@@ -127,6 +127,7 @@ export function mapEmrRow(row) {
     department: getRowValue(row, "ORDERING DEPARTMENT", "DEPARTMENT"),
     opIpRaw: getRowValue(row, "IP/OP/OT"),
     opIpType: parseOpIpType(getRowValue(row, "IP/OP/OT")),
+    patientType: getRowValue(row, "PATIENT TYPE").toUpperCase(),
     completedAt: parseEmrDate(getRowValue(row, "COMPLETED DATE")),
     requestDate: parseEmrDate(getRowValue(row, "REQUEST DATE")),
   };
@@ -296,6 +297,7 @@ export async function buildOrderSnapshot(orderId, approvedRows, readinessRule) {
     patientName: first?.patientName || "",
     phone: normalizePhone(first?.mobile),
     opIpType: first?.opIpType || "UNKNOWN",
+    patientType: first?.patientType || "",
     department: first?.department || "",
     readiness,
     procIds,
@@ -459,6 +461,7 @@ export function buildTodayLabBoard(rows) {
       department: first.department,
       opIpType: first.opIpType,
       opIpRaw: first.opIpRaw,
+      patientType: first.patientType || "",
       hisStatus: dominantHisStatus(statusCounts),
       statusCounts,
       procedureTotal: active.length,

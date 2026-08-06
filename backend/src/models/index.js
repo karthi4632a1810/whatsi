@@ -7,6 +7,7 @@ const patientSchema = new mongoose.Schema(
     phone: { type: String, default: "" },
     phoneOverride: { type: String, default: "" },
     opIpType: { type: String, enum: ["OP", "IP", "OT", "UNKNOWN"], default: "UNKNOWN" },
+    patientType: { type: String, default: "" },
     department: { type: String, default: "" },
     lastSyncedAt: { type: Date },
   },
@@ -24,6 +25,7 @@ const reportSchema = new mongoose.Schema(
     phone: { type: String, default: "" },
     reportType: { type: String, default: "LAB" },
     opIpType: { type: String, default: "UNKNOWN" },
+    patientType: { type: String, default: "" },
     department: { type: String, default: "" },
     procIds: [{ type: Number }],
     procedureNames: [{ type: String }],
@@ -77,6 +79,7 @@ const hisLabOrderSchema = new mongoose.Schema(
     department: { type: String, default: "" },
     opIpType: { type: String, default: "UNKNOWN" },
     opIpRaw: { type: String, default: "" },
+    patientType: { type: String, default: "" },
     hisStatus: { type: String, default: "" },
     readiness: {
       type: String,
