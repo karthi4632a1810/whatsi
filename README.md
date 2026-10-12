@@ -79,15 +79,23 @@ docker compose exec -T mongo sh -c 'mongorestore --drop --gzip --archive \
 ### Existing installs: turning on the MongoDB password
 
 The root and app users are created automatically only on an empty volume. On a volume
-that already has data, create them once *before* adding the `MONGO_*` values and
-restarting:
+that already has data, the backend fails with `Authentication failed` until you create
+them once. Set the `MONGO_*` values in `.env`, `docker compose up -d`, then:
 
 ```bash
-docker exec -e ROOTPW=… -e APPPW=… whatsi-mongo mongosh --quiet --eval '
-  db.getSiblingDB("admin").createUser({user:"root", pwd:process.env.ROOTPW, roles:["root"]});
-  db.getSiblingDB("whatsi").createUser({user:"whatsi", pwd:process.env.APPPW,
-    roles:[{role:"readWrite",db:"whatsi"},{role:"readWrite",db:"whatsi_integration_test"}]});'
+docker compose exec -T mongo mongosh --quiet --eval '
+  const e = process.env, admin = db.getSiblingDB("admin");
+  admin.createUser({user: e.MONGO_INITDB_ROOT_USERNAME, pwd: e.MONGO_INITDB_ROOT_PASSWORD, roles: ["root"]});
+  admin.auth(e.MONGO_INITDB_ROOT_USERNAME, e.MONGO_INITDB_ROOT_PASSWORD);
+  db.getSiblingDB("whatsi").createUser({user: e.MONGO_APP_USER, pwd: e.MONGO_APP_PASSWORD,
+    roles: [{role: "readWrite", db: "whatsi"}, {role: "readWrite", db: "whatsi_integration_test"}]});'
+mkdir -p backups && chown 1000:1000 backups   # backup container runs as uid 1000
+docker compose restart backend backup
 ```
+
+MongoDB is already in password mode at this point, so the script logs in as root right
+after creating it; without that, creating the second user is refused. Use letters and
+digits only in the passwords (`openssl rand -hex 24`): they go into a connection URI.
 
 Nothing is sent until **Message sending enabled** is switched on in Settings (and
 `WATI_SEND_ENABLED=true`, `WATI_TEST_MODE=false` in `.env`). **Automation enabled** fills

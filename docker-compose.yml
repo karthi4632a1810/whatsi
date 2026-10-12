@@ -6,8 +6,8 @@ services:
   mongo:
     image: mongo:7
     container_name: whatsi-mongo
-    # Loopback only: MongoDB has no password, so it must not be reachable from
-    # the network. The backend talks to it over the Docker network (mongo:27017).
+    # Loopback only: MongoDB should not be reachable from the network even with a
+    # password. The backend talks to it over the Docker network (mongo:27017).
     ports:
       - "127.0.0.1:3002:27017"
     # With a root user set, the image starts mongod with --auth. On an empty

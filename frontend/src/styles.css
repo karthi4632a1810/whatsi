@@ -840,7 +840,9 @@ button:not(.filter-pill),
   transition: background 0.15s ease, transform 0.1s ease;
 }
 
-button:not(.filter-pill):hover:not(:disabled) {
+/* WhatsApp Monitor (.wa-page) buttons style their own hover; the navy fill here
+   would otherwise sit under their dark text. */
+button:not(.filter-pill, .wa-page *):hover:not(:disabled) {
   background: var(--navy);
 }
 
