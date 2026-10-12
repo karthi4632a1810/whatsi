@@ -1,7 +1,7 @@
 import { Route, Routes } from "react-router-dom";
-import WatiOverviewPage from "../pages/WatiOverviewPage.jsx";
-import WatiTemplatesPage from "../pages/WatiTemplatesPage.jsx";
-import PatientsPage from "../pages/PatientsPage.jsx";
+import WatiOverview from "./WatiOverview.jsx";
+import WatiTemplates from "./WatiTemplates.jsx";
+import WatiContacts from "./WatiContacts.jsx";
 import { ChartIcon, FilePdfIcon, UsersIcon } from "../portal/Icons.jsx";
 import { ScreenTabs } from "./ScreenParts.jsx";
 
@@ -17,9 +17,9 @@ export default function WatiSettings({ access }) {
         ]}
       />
       <Routes>
-        <Route index element={<div className="legacy"><WatiOverviewPage /></div>} />
-        <Route path="templates" element={<div className="legacy"><WatiTemplatesPage canEdit={access.wati.canEdit} /></div>} />
-        <Route path="contacts" element={<div className="legacy"><PatientsPage canEdit={access.wati.canEdit || access.reports.canSend} /></div>} />
+        <Route index element={<WatiOverview />} />
+        <Route path="templates" element={<WatiTemplates canEdit={access.wati.canEdit} />} />
+        <Route path="contacts" element={<WatiContacts canEdit={access.wati.canEdit || access.reports.canSend} />} />
       </Routes>
     </div>
   );

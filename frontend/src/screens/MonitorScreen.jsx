@@ -1,6 +1,6 @@
 import { Route, Routes } from "react-router-dom";
 import WhatsappMonitorPage from "../pages/WhatsappMonitorPage.jsx";
-import MessagesPage from "../pages/MessagesPage.jsx";
+import MessageLog from "./MessageLog.jsx";
 import { ChartIcon, HistoryIcon } from "../portal/Icons.jsx";
 import { ScreenTabs } from "./ScreenParts.jsx";
 
@@ -15,8 +15,8 @@ export default function MonitorScreen({ access }) {
         ]}
       />
       <Routes>
-        <Route index element={<WhatsappMonitorPage canAct={access.monitor.canAct} canExport={access.exports} />} />
-        <Route path="messages" element={<div className="legacy"><MessagesPage canRetry={access.monitor.canAct} /></div>} />
+        <Route index element={<WhatsappMonitorPage readOnly={!access.monitor.canAct} canExport={access.exports} />} />
+        <Route path="messages" element={<MessageLog canRetry={access.monitor.canAct} />} />
       </Routes>
     </div>
   );

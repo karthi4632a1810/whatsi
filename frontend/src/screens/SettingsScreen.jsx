@@ -1,6 +1,6 @@
 import { Route, Routes, useNavigate } from "react-router-dom";
 import MasterSettings from "../portal/MasterSettings.jsx";
-import SettingsPage from "../pages/SettingsPage.jsx";
+import SendingSchedule from "./SendingSchedule.jsx";
 import { ClockIcon, GearIcon } from "../portal/Icons.jsx";
 import { ScreenTabs } from "./ScreenParts.jsx";
 
@@ -19,7 +19,7 @@ export default function SettingsScreen({ onSaved }) {
       />
       <Routes>
         <Route index element={<MasterSettings onNavigate={(v) => PATHS[v] && navigate(PATHS[v])} onSaved={onSaved} />} />
-        <Route path="sending" element={<div className="legacy"><SettingsPage /></div>} />
+        <Route path="sending" element={<SendingSchedule />} />
       </Routes>
     </div>
   );

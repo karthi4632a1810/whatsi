@@ -401,4 +401,12 @@ export async function migrateUsers() {
     await User.updateOne({ _id: user._id }, { $set: { username: name } });
     console.log(`[users] ${user.email || user._id} can now also sign in as "${name}"`);
   }
+
+  // Staff accounts from before permissions existed could use every screen; keep
+  // that (all but Users and Settings) until a super admin narrows it on Users.
+  const unset = await User.updateMany(
+    { role: { $ne: "admin" }, $or: [{ permissions: null }, { permissions: { $exists: false } }] },
+    { $set: { permissions: FULL_PERMISSIONS } }
+  );
+  if (unset.modifiedCount) console.log(`[users] ${unset.modifiedCount} older staff account(s) given the Admin preset — adjust them on Users`);
 }

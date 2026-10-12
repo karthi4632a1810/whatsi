@@ -6,12 +6,12 @@ patients are handled by the investigation-chart portal, not here.
 
 ## How a report goes out
 
-1. Every 15 minutes (when **Automation enabled** is on in Settings) whatsi reads today's
+1. Every 15 minutes (when **Check HIS automatically** is on in Settings → Sending schedule) whatsi reads today's
    lab orders from HIS, keeps the OP ones, and puts each order in the WhatsApp Queue once
-   **all** its results are approved. Z patients are never sent. *Sync to queue* on HIS Lab
-   Today does the same by hand.
-2. With **Message sending enabled**, each queued report goes out **3 hours after its last
-   result is approved** (Settings → Send schedule: hours after approval, or once a day at a
+   **all** its results are approved. Z patients are never sent. *Sync to queue* on the HIS
+   board does the same by hand.
+2. With **Send to patients** on, each queued report goes out **3 hours after its last
+   result is approved** (Settings → Sending schedule: hours after approval, or once a day at a
    fixed time instead).
 3. **Night hold:** nothing is sent between 9 PM and 7 AM — anything due then goes at 7 AM.
 4. Reports approved more than 24 h ago are not sent automatically (e.g. after downtime);
@@ -19,42 +19,57 @@ patients are handled by the investigation-chart portal, not here.
 5. If results change after queuing (a test added or a result amended), the report waits
    until everything is approved again, and the 3 hours count from the new approval.
 6. Delivered / read ticks come from the WATI webhook or a few capped status checks per
-   message; HIS Lab Today shows "Delivered" / "Read".
+   message; the HIS board shows "Delivered" / "Read".
 
 Each report is claimed atomically before sending, so two workers or a staff click can
 never send it twice. Temporary failures (network, WATI limit) retry with backoff; "not on
-WhatsApp" and "no phone" wait for a person — adding a number in Contacts re-queues them.
+WhatsApp" and "no phone" wait for a person — adding a number in WATI Settings → Contacts re-queues them.
 A send cut off by a restart shows as **Check needed** in the queue: check the Message log
 before pressing Send again.
 
 ## Screens
 
-The same left-menu screens as before: Dashboard, HIS Lab Today, Lab report search,
-WhatsApp Queue, Contacts, WATI Overview, Templates, Message log, Settings. What changed for
-the new flow:
+The UI is the investigation-chart portal's design and menu, on whatsi's own OP flow.
+Each person sees only the menu items their account allows.
 
-| Screen | Change |
+| Menu | What's there |
 |---|---|
-| Settings → Queue rules | Patient scope is fixed to **OP only** |
-| Settings → Send schedule | "After results are approved" + hours, or "Once a day"; Night hold with from / until |
-| WhatsApp Queue | Under each status: when it goes out ("Sends 2:30 pm"), or why not ("Sending off", "Waiting for results"); new **Check needed** status |
-| HIS Lab Today | WhatsApp column shows "Sends 2:30 pm" / "Delivered" / "Read"; the top pills show the schedule |
-| **WhatsApp Monitor** (new, WATI section) | The investigation portal's monitor for OP reports: live status, filters (lab day / sent date, time, status, trigger, search), KPIs vs previous period, WATI connection, "did every ready OP patient get their report?", needs attention, charts (over time, delivery & read rate, funnel, read hours, time to read, approval → WhatsApp, failures, triggers, departments, staff), patients / messages table with timeline drawer and Retry, CSV / JSON export |
+| **OP Lab Reports** | *HIS board*: every OP lab order of a day from HIS — results progress, ready, WhatsApp state, the AOSTA report PDF; search, filters, Refresh from HIS / Sync to queue. *WhatsApp queue*: the day's reports, when each goes out ("Sends 2:30 pm"), Send / Retry, test send |
+| **Lab Search** | OP orders across a date range by patient, UHID, order or mobile; open the PDF or add an older report to the queue |
+| **Lab Finder** | OP patients by test result across lab days (e.g. HbA1c 9 or more), from the approved RESULT values HIS sends; CSV download |
+| **WATI Settings** | *Overview* (connection, sends, backlog, API quota), *Templates*, *Contacts* (set a different WhatsApp number per patient) |
+| **Monitor** | *WhatsApp Monitor* (delivery, reads, failures, charts, retry, export) and the raw *Message log* |
+| **Audit Log** | Every sign-in, screen, send, retry, PDF, download and change — timeline, people, departments, sessions, CSV |
+| **Users** | Super admin: accounts, per-screen access (No access / View only / View & send), presets, access hours, temporary passwords, unlock, sign out everywhere |
+| **Settings** | Super admin: *Master Settings* (feature switches, sign-in rules, idle sign-out, audit retention, announcement, read-only mode) and the *Sending schedule* |
+
+## Sign-in and access
+
+- `npm run seed` (below) creates or resets a **super admin** (`ADMIN_USERNAME` /
+  `ADMIN_EMAIL`, password `ADMIN_PASSWORD`). Super admins have every screen and manage
+  Users and Settings; they can't be edited, locked or deleted from the Users screen.
+- Everyone else gets an account on **Users**. A new account (or a reset) has a temporary
+  password; the person must choose their own at first sign-in. Sign-in works with the
+  username or the email.
+- Every API route checks the account's permission on the server
+  (`backend/src/services/accessControl.js`); the screens only hide what someone can't use.
+- **Read-only mode** (Master Settings) turns every staff account to view-only, blocks
+  downloads and pauses the automatic sender, for maintenance.
 
 ## Run
 
 ```bash
 cp .env.example .env              # fill in WATI, EMR and a JWT_SECRET (openssl rand -hex 32)
 docker compose up -d --build
-docker compose exec backend node scripts/seedAdmin.js   # creates ADMIN_EMAIL / ADMIN_PASSWORD
+docker compose exec backend node scripts/seedAdmin.js   # super admin: ADMIN_USERNAME / ADMIN_PASSWORD
 ```
 
 UI: http://localhost:1002. MongoDB (127.0.0.1:3002) and the API (127.0.0.1:2002) only
 listen on this machine, and MongoDB needs a password (`MONGO_*` in `.env`). The backend
 logs in as `MONGO_APP_USER`, which can only read and write the `whatsi` database.
 
-Password change (`POST /api/auth/change-password`) and "sign out everywhere"
-(`POST /api/auth/sign-out-everywhere`) exist in the API; both end the user's other sessions.
+Staff change their own password from the profile menu (top right); that signs them out
+on their other devices. A super admin can sign anyone out everywhere from Users.
 
 ### Report links
 

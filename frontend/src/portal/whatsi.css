@@ -406,3 +406,148 @@
   color: var(--text-muted);
   font-size: 12px;
 }
+
+/* ——— WATI Settings ——— */
+.op-stats-5 {
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+}
+.op-pill-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.op-day-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+}
+.op-day-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 2px;
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: 13.5px;
+}
+.op-day-list li:last-child {
+  border-bottom: none;
+}
+.op-override {
+  width: 180px;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  font: inherit;
+  font-size: 13px;
+  background: var(--bg-surface);
+}
+.op-override.has-value {
+  border-color: var(--green-border);
+  background: var(--green-bg);
+  font-weight: 600;
+}
+.op-override:focus {
+  outline: 2px solid var(--primary-border);
+  border-color: var(--primary);
+}
+.op-bad-number {
+  color: var(--red);
+}
+/* The portal styles the editor's text inputs; selects and text areas match them. */
+.um-field select,
+.um-field textarea {
+  width: 100%;
+  min-width: 0;
+  padding: 9px 11px;
+  font: inherit;
+  font-size: 14px;
+  color: var(--text-main);
+  background: #ffffff;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  outline: 0;
+}
+.um-field textarea {
+  resize: vertical;
+  line-height: 1.45;
+}
+.um-field select:focus,
+.um-field textarea:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+}
+
+/* ——— Settings → Sending schedule (Master Settings look) ——— */
+.op-ms-main {
+  display: grid;
+  gap: 16px;
+}
+.op-row-off {
+  opacity: 0.55;
+}
+.op-time,
+.op-text {
+  height: 38px;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--text-main);
+  font: inherit;
+  font-size: 14px;
+}
+.op-text {
+  width: min(260px, 100%);
+}
+.op-time-range {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+.op-test-numbers {
+  display: grid;
+  gap: 10px;
+  width: 100%;
+}
+.op-test-numbers input {
+  flex: 1 1 220px;
+  min-width: 0;
+  height: 38px;
+  padding: 0 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  font: inherit;
+}
+.op-system {
+  padding: 4px 2px;
+}
+
+/* ——— Monitor → Message log ——— */
+.op-reason {
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+}
+.op-log .category-filter-chips {
+  margin: 16px 0 12px;
+}
+
+/* Stacked toolbars on narrow screens: the search box must not keep its 240px basis as height. */
+@media (max-width: 960px) {
+  .op-toolbar > *,
+  .op-toolbar .in-table-filter {
+    flex: 0 0 auto;
+    width: 100%;
+    max-width: none;
+  }
+  .op-bulk-send {
+    margin-left: 0;
+  }
+}
