@@ -1,3 +1,5 @@
+> **Outdated since the OP upgrade (2026-10-06):** whatsi is now OP-only and sends each report a set time after approval. See README.md for current behaviour.
+
 # MAPIMS Whatsi - Full Project Journey
 
 ## 1) What This Project Is

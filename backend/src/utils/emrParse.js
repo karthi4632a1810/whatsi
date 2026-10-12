@@ -122,3 +122,25 @@ export function parseOpIpType(value) {
   if (raw.includes(" OT")) return "OT";
   return "UNKNOWN";
 }
+
+/**
+ * EMR rows are result lines ("ABSOLUTE LYMPHOCYTE COUNT [COMPLETE BLOOD COUNT]");
+ * the name in brackets is the test they belong to. Groups lines into tests:
+ * [{ name, total, approved, completedAt }] — a test is approved when all its lines are.
+ */
+export function groupTests(procedures = []) {
+  const groups = new Map();
+  for (const p of procedures) {
+    const raw = String(p?.name || "").trim();
+    if (!raw) continue;
+    const name = (raw.match(/\[([^\]]+)\]\s*$/)?.[1] || raw).trim();
+    const g = groups.get(name) || { name, total: 0, approved: 0, completedAt: null };
+    g.total += 1;
+    if (p.status === "RESULT APPROVED") {
+      g.approved += 1;
+      if (p.completedAt && (!g.completedAt || new Date(p.completedAt) > new Date(g.completedAt))) g.completedAt = p.completedAt;
+    }
+    groups.set(name, g);
+  }
+  return [...groups.values()];
+}

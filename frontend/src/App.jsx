@@ -11,6 +11,7 @@ import WatiOverviewPage from "./pages/WatiOverviewPage.jsx";
 import WatiTemplatesPage from "./pages/WatiTemplatesPage.jsx";
 import SettingsPage from "./pages/SettingsPage.jsx";
 import LabSearchPage from "./pages/LabSearchPage.jsx";
+import WhatsappMonitorPage from "./pages/WhatsappMonitorPage.jsx";
 
 function PrivateRoute({ children }) {
   return getToken() ? children : <Navigate to="/login" replace />;
@@ -35,6 +36,7 @@ export default function App() {
         <Route path="reports" element={<ReportsPage />} />
         <Route path="patients" element={<PatientsPage />} />
         <Route path="messages" element={<MessagesPage />} />
+        <Route path="monitor" element={<WhatsappMonitorPage />} />
         <Route path="wati" element={<WatiOverviewPage />} />
         <Route path="wati/templates" element={<WatiTemplatesPage />} />
         <Route path="settings" element={<SettingsPage />} />

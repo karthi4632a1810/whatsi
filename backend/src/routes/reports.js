@@ -13,7 +13,15 @@ import {
   syncOrderToQueue,
 } from "../services/reports.js";
 import { parseLabReportUrl } from "../utils/labReportUrl.js";
-import { fetchTodayLabBoard, buildLabReportUrl, isPlausibleProcIds } from "../services/emr.js";
+import {
+  buildLabReportUrl,
+  isEmrReportUrl,
+  isPlausibleProcIds,
+  looksLikeEmrOrderId,
+} from "../services/emr.js";
+import { escapeRegex } from "../utils/text.js";
+import { plannedSendAt, scheduleNote } from "../utils/schedule.js";
+import { sendFlags } from "../services/opBoard.js";
 import { reportDayKey, startOfToday, endOfToday, parseQueryDate } from "../utils/dates.js";
 import { deriveWhatsappDisplay } from "../utils/whatsappDisplay.js";
 import {
@@ -257,6 +265,8 @@ function buildHisSummary(enriched) {
 
 async function enrichHisOrders(orders) {
   const orderIds = orders.map((o) => o.orderId);
+  const settings = await getSettings();
+  const flags = sendFlags(settings);
   const [whatsappReports, pdfMetaMap, lastLogs] = await Promise.all([
     Report.find({ reportId: { $in: orderIds } }),
     getOrderPdfMetaMap(orderIds),
@@ -286,7 +296,7 @@ async function enrichHisOrders(orders) {
   return orders.map((order) => {
     const wa = waMap.get(order.orderId);
     const lastLog = logMap.get(order.orderId);
-    const waDisplay = deriveWhatsappDisplay(wa, lastLog);
+    const waDisplay = deriveWhatsappDisplay(wa, lastLog, { settings, flags });
     const meta = pdfMetaMap.get(order.orderId);
     const procIds = isPlausibleProcIds(wa?.procIds)
       ? wa.procIds
@@ -336,6 +346,12 @@ function parseProcIdsQuery(value) {
     .filter((n) => Number.isFinite(n) && n > 0);
 }
 
+// Order IDs reach SQL text sent to the EMR — only plain numeric IDs get past here.
+router.param("orderId", (req, res, next, value) => {
+  if (!looksLikeEmrOrderId(value)) return res.status(400).json({ error: "Invalid order ID" });
+  next();
+});
+
 router.get("/his/pdf-url/:orderId", async (req, res) => {
   try {
     res.json(
@@ -362,7 +378,10 @@ router.get("/his/pdf/:orderId", async (req, res) => {
       });
     }
 
-    const upstream = await fetch(pdfUrl);
+    if (!isEmrReportUrl(pdfUrl)) {
+      return res.status(400).json({ error: "Stored report link is not an EMR report URL" });
+    }
+    const upstream = await fetch(pdfUrl, { signal: AbortSignal.timeout(60_000) });
     if (!upstream.ok) {
       return res.status(upstream.status).json({ error: `EMR PDF fetch failed (${upstream.status})` });
     }
@@ -419,12 +438,13 @@ router.get("/reports", async (req, res) => {
   if (req.query.readiness) query.readiness = String(req.query.readiness).toUpperCase();
   if (req.query.reportDay) query.reportDay = String(req.query.reportDay);
   if (req.query.q) {
-    const q = String(req.query.q).trim();
+    const q = escapeRegex(String(req.query.q).trim());
+    const digits = String(req.query.q).replace(/\D/g, "");
     query.$or = [
       { patientName: new RegExp(q, "i") },
       { patientId: new RegExp(q, "i") },
       { reportId: new RegExp(q, "i") },
-      { phone: new RegExp(q.replace(/\D/g, ""), "i") },
+      ...(digits ? [{ phone: new RegExp(digits) }] : []),
     ];
   }
 
@@ -448,11 +468,18 @@ router.get("/reports", async (req, res) => {
       ])
     : [];
   const attemptMap = new Map(lastAttempts.map((d) => [d._id, d]));
+  const settings = await getSettings();
+  const flags = sendFlags(settings);
+  const now = new Date();
 
   res.json({
     reports: reports.map((r) => {
       const attempt = attemptMap.get(r.reportId);
       const json = r.toObject();
+      // When it goes out (or why not) — shown under the status badge.
+      json.scheduleNote = scheduleNote(json, settings, flags, now);
+      const planned = json.status === "PENDING" ? plannedSendAt(json, settings) : null;
+      json.plannedSendAt = planned ? planned.toISOString() : null;
       if (attempt) {
         json.lastAttempt = {
           status: attempt.status || "",
@@ -495,24 +522,28 @@ router.post("/reports/:id/send", async (req, res) => {
       triggerType: "MANUAL",
       force: req.body?.force === true,
       testContactPhones: req.body?.testContactPhones,
+      sentBy: req.user?.email || "",
     });
     res.json(result);
   } catch (error) {
-    res.status(400).json({ error: error.message });
+    const status = error.code === "NOT_FOUND" ? 404 : error.code === "ALREADY_SENT" ? 409 : 400;
+    res.status(status).json({ error: error.message, code: error.code || "SEND_FAILED" });
   }
 });
 
 router.post("/reports/bulk-send", async (req, res) => {
-  const ids = Array.isArray(req.body?.ids) ? req.body.ids : [];
+  const ids = (Array.isArray(req.body?.ids) ? req.body.ids : []).filter((id) => /^[a-f0-9]{24}$/i.test(String(id)));
+  if (!ids.length) return res.status(400).json({ error: "Select at least one report" });
   const result = await sendPendingReports({
     triggerType: "MANUAL",
     reportIds: ids,
     testContactPhones: req.body?.testContactPhones,
+    sentBy: req.user?.email || "",
   });
   res.json(result);
 });
 
-router.post("/reports/send-all-pending", async (_req, res) => {
+router.post("/reports/send-all-pending", async (req, res) => {
   const settings = await getSettings();
   if (!settings.messageSendEnabled) {
     return res.status(400).json({
@@ -524,7 +555,7 @@ router.post("/reports/send-all-pending", async (_req, res) => {
       error: "Test send mode: send reports one at a time from the queue and pick a contact",
     });
   }
-  const result = await sendPendingReports({ triggerType: "MANUAL" });
+  const result = await sendPendingReports({ triggerType: "MANUAL", sentBy: req.user?.email || "" });
   res.json(result);
 });
 

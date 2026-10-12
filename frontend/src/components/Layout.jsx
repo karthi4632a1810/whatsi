@@ -6,6 +6,7 @@ import {
   IconDashboard,
   IconLab,
   IconLog,
+  IconMonitor,
   IconLogout,
   IconQueue,
   IconSearch,
@@ -31,6 +32,7 @@ const NAV_SECTIONS = [
   {
     label: "WATI",
     items: [
+      { to: "/monitor", label: "WhatsApp Monitor", Icon: IconMonitor },
       { to: "/wati", end: true, label: "WATI Overview", Icon: IconWati },
       { to: "/wati/templates", label: "Templates", Icon: IconTemplate },
       { to: "/messages", label: "Message log", Icon: IconLog },

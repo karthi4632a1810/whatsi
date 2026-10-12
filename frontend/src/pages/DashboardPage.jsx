@@ -149,8 +149,15 @@ function SystemStatus({ health, stats }) {
         <span className={`status-pill ${stats?.automationEnabled ? "ok" : "neutral"}`}>
           Queue sync {stats?.automationEnabled ? "on" : "off"}
         </span>
-        {stats?.endOfDayTime ? (
+        {stats?.mode === "END_OF_DAY" || stats?.mode === "CUSTOM_SCHEDULE" ? (
           <span className="status-pill neutral">EOD {stats.endOfDayTime}</span>
+        ) : stats ? (
+          <span className="status-pill neutral">Send {stats.sendDelayHours ?? 3}h after approval</span>
+        ) : null}
+        {stats?.quietHoursEnabled ? (
+          <span className="status-pill neutral">
+            Night hold {stats.quietStart}–{stats.quietEnd}
+          </span>
         ) : null}
         <span className="status-pill neutral">Board in MongoDB</span>
       </div>

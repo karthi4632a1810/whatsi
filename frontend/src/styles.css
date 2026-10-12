@@ -1187,6 +1187,11 @@ tr.row-updated td {
   white-space: nowrap;
 }
 
+/* the queue's narrow status column: let "Sends tomorrow 7:00 am" wrap */
+.queue-table .status-cell__note {
+  white-space: normal;
+}
+
 .badge.failed { background: var(--bad-soft); color: #991b1b; }
 .badge.ready { background: var(--approved-soft); color: #166534; }
 .badge.partial { background: var(--warn-soft); color: #9a3412; }

@@ -10,6 +10,12 @@ export function setToken(token) {
 
 export function clearToken() {
   localStorage.removeItem(TOKEN_KEY);
+  // Cached HIS boards contain patient data — don't leave them on shared PCs.
+  try {
+    indexedDB?.deleteDatabase("mapims-his");
+  } catch {
+    // ignore
+  }
 }
 
 async function request(path, options = {}) {
@@ -38,7 +44,51 @@ async function request(path, options = {}) {
   return data;
 }
 
+/** Query string for the WhatsApp Monitor (arrays become comma lists, empty values are left out). */
+function monitorParams(params = {}) {
+  const q = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    const value = Array.isArray(v) ? v.join(",") : v;
+    if (value !== undefined && value !== null && String(value) !== "") q.set(k, value);
+  }
+  return q.toString();
+}
+
+/** Downloads a WhatsApp Monitor export; returns the file name. */
+export async function downloadMonitorExport(params, view, format) {
+  const token = getToken();
+  const response = await fetch(`/api/monitor/export?${monitorParams({ ...params, view, format })}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || `Export failed (${response.status})`);
+  }
+  const blob = await response.blob();
+  const name = /filename="([^"]+)"/.exec(response.headers.get("Content-Disposition") || "")?.[1] || `whatsapp-op.${format}`;
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+  return name;
+}
+
 export const api = {
+  // WhatsApp Monitor (OP lab reports)
+  monitorSummary: (params) => request(`/api/monitor/summary?${monitorParams(params)}`),
+  monitorInsights: (params) => request(`/api/monitor/insights?${monitorParams(params)}`),
+  monitorMessages: (params) => request(`/api/monitor/messages?${monitorParams(params)}`),
+  monitorPatients: (params) => request(`/api/monitor/patients?${monitorParams(params)}`),
+  monitorMessage: (id) => request(`/api/monitor/messages/${encodeURIComponent(id)}`).then((d) => d.message),
+  monitorActivity: (limit = 20) => request(`/api/monitor/activity?limit=${limit}`).then((d) => d.events),
+  monitorWati: () => request("/api/monitor/wati"),
+  monitorRefresh: () => request("/api/monitor/refresh", { method: "POST", body: "{}" }),
+  monitorRetry: (id) => request(`/api/monitor/messages/${encodeURIComponent(id)}/retry`, { method: "POST", body: "{}" }),
+
   login: (email, password) =>
     request("/api/auth/login", {
       method: "POST",

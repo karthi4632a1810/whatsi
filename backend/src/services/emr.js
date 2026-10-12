@@ -148,11 +148,20 @@ export async function fetchOrderStatusRows(orderId, from, to) {
   return rows.map(mapEmrRow).filter((row) => row.orderId === String(orderId));
 }
 
+/** Order IDs go into SQL text sent to the EMR, so only plain in-range integers pass. */
+function safeOrderIdForSql(orderId) {
+  const s = String(orderId ?? "").trim();
+  if (!looksLikeEmrOrderId(s)) return null;
+  return String(Number.parseInt(s, 10));
+}
+
 async function fetchProcIdsFromLabService(orderId) {
+  const id = safeOrderIdForSql(orderId);
+  if (!id) return [];
   const opts = [2, 3, 4, 1];
   for (const opt of opts) {
     try {
-      const rows = await fetchLabRows(`Exec LabPatFiles @Opt=${opt},@OrderID=${orderId}`);
+      const rows = await fetchLabRows(`Exec LabPatFiles @Opt=${opt},@OrderID=${id}`);
       const ids = rows
         .flatMap((row) =>
           [row.ProcId, row.ProcID, row.PROCID, row.ProcedureId, row.Proc_Id, row.Procid]
@@ -177,7 +186,9 @@ export function isPlausibleProcIds(procIds = []) {
 
 async function fetchProcIdsFromCustomQuery(orderId) {
   if (!config.emr.procIdsQuery) return [];
-  const query = config.emr.procIdsQuery.replaceAll("{orderId}", String(orderId));
+  const id = safeOrderIdForSql(orderId);
+  if (!id) return [];
+  const query = config.emr.procIdsQuery.replaceAll("{orderId}", id);
   const rows = await fetchLabRows(query);
   return rows
     .flatMap((row) => Object.values(row))
@@ -186,6 +197,7 @@ async function fetchProcIdsFromCustomQuery(orderId) {
 }
 
 export async function fetchLabResultHisHtml(orderId) {
+  if (!looksLikeEmrOrderId(orderId)) return "";
   const url = new URL(config.emr.labResultHisUrl);
   url.searchParams.set("action", "Search");
   url.searchParams.set("Orderid", String(orderId));
@@ -236,6 +248,17 @@ export async function resolveProcIds(orderId, approvedRows) {
   if (fromCustom.length) return fromCustom;
 
   return [];
+}
+
+/** Only URLs on the EMR report host may be fetched server-side or sent to patients. */
+export function isEmrReportUrl(value) {
+  try {
+    const url = new URL(String(value || ""));
+    const base = new URL(config.emr.reportBaseUrl);
+    return url.protocol === base.protocol && url.host === base.host;
+  } catch {
+    return false;
+  }
 }
 
 export function buildLabReportUrl(orderId, procIds = []) {
@@ -304,7 +327,7 @@ export async function buildOrderSnapshot(orderId, approvedRows, readinessRule) {
     procedureNames: approvedForOrder.map((r) => r.procedureName).filter(Boolean),
     procedureTotal: active.length,
     approvedCount: approvedForOrder.length,
-    reportReadyAt: latestCompleted || new Date(),
+    reportReadyAt: latestCompleted || null,
     hisReportUrl: procIds.length ? buildLabReportUrl(orderId, procIds) : "",
   };
 }
@@ -430,9 +453,13 @@ function dominantHisStatus(statusCounts) {
   return Object.keys(statusCounts)[0] || "UNKNOWN";
 }
 
+/** whatsi is OP-only — IP discharges are handled by the investigation-chart portal. */
+export const DELIVERY_OP_IP_TYPE = "OP";
+
 export function buildTodayLabBoard(rows) {
   const byOrder = new Map();
   for (const row of rows) {
+    if (row.opIpType !== DELIVERY_OP_IP_TYPE) continue;
     if (!byOrder.has(row.orderId)) byOrder.set(row.orderId, []);
     byOrder.get(row.orderId).push(row);
   }

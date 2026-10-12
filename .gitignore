@@ -55,3 +55,8 @@ coverage/
 
 # Optional local overrides
 *.local
+
+# MongoDB backups (patient data) and generated output
+backups/
+output/
+*.csv

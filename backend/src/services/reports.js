@@ -13,12 +13,25 @@ import {
   isPlausibleProcIds,
   buildOrderSnapshot,
   fetchTodayLabBoard,
+  isEmrReportUrl,
+  DELIVERY_OP_IP_TYPE,
 } from "./emr.js";
 import { canSendToPhone, sendLabReportMessage } from "./wati.js";
+import { reportLinkFor } from "./reportLinks.js";
+import {
+  autoSendDecision,
+  classifyFailure,
+  effectiveMode,
+  isQuietTime,
+  maxAgeHours,
+  nextRetryTime,
+  parseClock,
+} from "../utils/schedule.js";
 import { isExcludedPatientType } from "../utils/emrParse.js";
 import { getOrderPdfMeta, upsertOrderPdfMeta } from "./orderPdfMeta.js";
 import { normalizePhone } from "../utils/phone.js";
 import {
+  partsInIst,
   reportDayKey,
   startOfToday,
   endOfToday,
@@ -41,14 +54,32 @@ export async function getSettings() {
   return settings;
 }
 
+/**
+ * One-time move of settings saved by older versions (no schemaVersion) to the
+ * OP-only, "N hours after approval" model. Runs once; later choices are kept.
+ */
+export async function migrateSettings() {
+  const raw = await AutomationSettings.collection.findOne({});
+  if (!raw || raw.schemaVersion >= 2) return getSettings();
+  const set = { schemaVersion: 2, scope: "OP_ONLY" };
+  if (raw.mode === "IMMEDIATE") {
+    Object.assign(set, { mode: "AFTER_READY", sendDelayHours: 0 });
+  } else {
+    // The old 6 PM daily batch becomes "3 hours after approval".
+    Object.assign(set, { mode: "AFTER_READY", sendDelayHours: raw.sendDelayHours ?? 3 });
+  }
+  await AutomationSettings.collection.updateOne({ _id: raw._id }, { $set: set });
+  console.log("[startup] settings moved to OP-only, send", set.sendDelayHours, "h after approval");
+  return getSettings();
+}
+
 function effectivePhone(patient, snapshotPhone) {
   return normalizePhone(patient?.phoneOverride || patient?.phone || snapshotPhone);
 }
 
-function scopeMatches(settings, opIpType) {
-  if (settings.scope === "OP_ONLY") return opIpType === "OP";
-  if (settings.scope === "IP_ONLY") return opIpType === "IP";
-  return true;
+// whatsi delivers OP reports only; IP discharges go through the investigation-chart portal.
+function scopeMatches(_settings, opIpType) {
+  return opIpType === DELIVERY_OP_IP_TYPE;
 }
 
 function orderHasNewTests(existing, snapshot) {
@@ -133,6 +164,12 @@ export async function syncPatientsAndReports(snapshots, { manual = false } = {})
     } else if (existing?.status === "FAILED" || existing?.status === "PENDING") {
       nextStatus = existing.status;
     }
+    // Never touch a report that is being sent right now or waits for a manual check.
+    const keepStatus = existing?.status === "QUEUED" || existing?.status === "NEEDS_REVIEW";
+    const phone = effectivePhone(patient, snapshot.phone);
+    // A report that failed only for lack of a phone number goes back in the queue once there is one.
+    const phoneArrived = existing?.status === "FAILED" && existing.failureKind === "NO_PHONE" && phone;
+    if (phoneArrived) nextStatus = "PENDING";
 
     let lastError = existing?.lastError || "";
     if (expanded && snapshot.readiness === "PARTIAL") {
@@ -146,7 +183,7 @@ export async function syncPatientsAndReports(snapshots, { manual = false } = {})
       patientId: snapshot.patientId,
       patientRef: patient._id,
       patientName: snapshot.patientName,
-      phone: effectivePhone(patient, snapshot.phone),
+      phone,
       opIpType: snapshot.opIpType,
       patientType: snapshot.patientType || "",
       department: snapshot.department,
@@ -157,15 +194,34 @@ export async function syncPatientsAndReports(snapshots, { manual = false } = {})
       readiness: snapshot.readiness,
       emrStatus: "RESULT APPROVED",
       hisReportUrl: snapshot.hisReportUrl,
-      reportReadyAt: snapshot.reportReadyAt,
+      reportReadyAt: snapshot.reportReadyAt || existing?.reportReadyAt || null,
       reportDay: day,
-      status: nextStatus,
       lastError,
     };
+    if (!keepStatus) payload.status = nextStatus;
 
+    // Fallback clock for the send delay when the EMR gives no completion time.
+    if (snapshot.readiness === "READY") {
+      payload.readySeenAt =
+        existing?.readySeenAt && existing.readiness === "READY" ? existing.readySeenAt : new Date();
+    }
+
+    if (expanded || phoneArrived) {
+      Object.assign(payload, {
+        failureKind: "",
+        retryable: false,
+        nextRetryAt: null,
+        attempts: 0,
+      });
+    }
     if (expanded) {
-      payload.sentAt = null;
-      payload.watiMessageId = "";
+      Object.assign(payload, {
+        sentAt: null,
+        watiMessageId: "",
+        deliveryStatus: "",
+        deliveredAt: null,
+        readAt: null,
+      });
     }
 
     if (!isPlausibleProcIds(payload.procIds)) {
@@ -198,7 +254,7 @@ export async function syncPatientsAndReports(snapshots, { manual = false } = {})
     const result = await Report.findOneAndUpdate(
       { reportId: snapshot.orderId, reportDay: day },
       { $set: payload },
-      { upsert: true, new: true, rawResult: true }
+      { upsert: true, new: true, includeResultMetadata: true }
     );
 
     if (result.lastErrorObject?.updatedExisting) updated += 1;
@@ -223,7 +279,7 @@ export function boardOrderToSnapshot(order, labDay) {
     procedureNames: (order.procedures || []).map((p) => p.name).filter(Boolean),
     procedureTotal: order.procedureTotal || 0,
     approvedCount: order.approvedCount || 0,
-    reportReadyAt: order.completedAt || order.requestDate || new Date(),
+    reportReadyAt: order.completedAt || null,
     hisReportUrl: procIds.length ? buildLabReportUrl(order.orderId, procIds) : "",
     labDay,
   };
@@ -255,12 +311,45 @@ export async function syncLabBoardToQueue({ from, to, manual = false, useStore =
 
   const snapshots = candidates.map((order) => boardOrderToSnapshot(order, labDay));
   const sync = await syncPatientsAndReports(snapshots, { manual });
+  const held = await holdReportsNoLongerReady(board, labDay);
   return {
     ...sync,
+    held,
     labDay,
     boardTotal: board.length,
     candidates: candidates.length,
   };
+}
+
+/**
+ * A queued (not yet sent) report whose order went back from READY — a result
+ * amended or a test added — must not go out until the board says READY again.
+ */
+async function holdReportsNoLongerReady(board, labDay) {
+  const byId = new Map(board.map((order) => [String(order.orderId), order]));
+  const waiting = await Report.find({
+    reportDay: labDay,
+    status: { $in: ["PENDING", "FAILED"] },
+    readiness: "READY",
+  }).select("reportId");
+  let held = 0;
+  for (const report of waiting) {
+    const order = byId.get(String(report.reportId));
+    if (!order || order.readiness === "READY") continue;
+    await Report.updateOne(
+      { _id: report._id, status: { $in: ["PENDING", "FAILED"] } },
+      {
+        $set: {
+          readiness: order.readiness,
+          procedureTotal: order.procedureTotal || 0,
+          approvedCount: order.approvedCount || 0,
+          lastError: `Results changed in HIS (${order.approvedCount || 0}/${order.procedureTotal || 0} approved) — waiting for full approval`,
+        },
+      }
+    );
+    held += 1;
+  }
+  return held;
 }
 
 export async function syncOrderToQueue(orderId, { from, to, reportDay } = {}) {
@@ -277,6 +366,9 @@ export async function syncOrderToQueue(orderId, { from, to, reportDay } = {}) {
   }
 
   const snapshot = await buildOrderSnapshot(id, approvedRows, settings.readinessRule);
+  if (snapshot.opIpType !== DELIVERY_OP_IP_TYPE) {
+    throw new Error("This is not an OP order — whatsi sends OP lab reports only (IP reports go through the investigation-chart portal)");
+  }
   if (snapshot.readiness === "WAITING") {
     throw new Error("Order is not ready — no approved results yet");
   }
@@ -299,8 +391,7 @@ export async function syncOrderToQueue(orderId, { from, to, reportDay } = {}) {
   };
 }
 
-export async function runEmrPoll({ from, to, autoSend = false, manual = false } = {}) {
-  const settings = await getSettings();
+export async function runEmrPoll({ from, to, manual = false } = {}) {
   const rangeFrom = from || startOfToday();
   const rangeTo = to || endOfToday();
   const labDay = reportDayKey(rangeFrom);
@@ -314,17 +405,8 @@ export async function runEmrPoll({ from, to, autoSend = false, manual = false } 
     manual,
     useStore: true,
   });
-
-  if (
-    autoSend &&
-    settings.messageSendEnabled &&
-    settings.mode === "IMMEDIATE" &&
-    !settings.watiTestSendMode
-  ) {
-    const sendResult = await sendPendingReports({ triggerType: "AUTO_IMMEDIATE" });
-    return { ...sync, boardRefresh, sendResult };
-  }
-
+  // Sending is not done here: the send worker (jobs/scheduler.js) picks up
+  // each report when its delay has passed.
   return { ...sync, boardRefresh };
 }
 
@@ -447,255 +529,378 @@ export async function resolveOrderPdfUrl(orderId, { procIds: hintProcIds = [] } 
   };
 }
 
+class SendBlockedError extends Error {
+  constructor(message, code = "BLOCKED") {
+    super(message);
+    this.code = code;
+    this.blocked = true;
+  }
+}
+
+const STALE_QUEUED_MS = 15 * 60 * 1000;
+
+/**
+ * Sends one queued OP report on WhatsApp.
+ *
+ * Checks that only depend on settings or the report (sending switched off,
+ * not OP, not ready, no phone, test-mode allowlist) throw SendBlockedError and
+ * change nothing. Otherwise the report is claimed atomically (PENDING/FAILED →
+ * QUEUED) so two workers, or a worker and a staff click, can never send it twice.
+ */
 export async function sendReportById(
   reportId,
-  { triggerType = "MANUAL", force = false, testContactPhones = null } = {}
+  { triggerType = "MANUAL", force = false, testContactPhones = null, sentBy = "" } = {}
 ) {
+  const settings = await getSettings();
+  const automatic = triggerType !== "MANUAL";
+  const useTestSend = Boolean(settings.watiTestSendMode);
+
+  if (automatic && useTestSend) {
+    throw new SendBlockedError("Test send mode: automatic sends are paused");
+  }
+  if (!settings.messageSendEnabled && !(useTestSend && !automatic)) {
+    throw new SendBlockedError("WhatsApp sending is switched off — turn it on in Settings");
+  }
+  if (!config.wati.sendEnabled) {
+    throw new SendBlockedError("Send blocked: set WATI_SEND_ENABLED=true in the server .env and restart the API");
+  }
+
   const report = await Report.findById(reportId).populate("patientRef");
-  if (!report) throw new Error("Report not found");
-
+  if (!report) throw new SendBlockedError("Report not found", "NOT_FOUND");
+  if (report.opIpType !== DELIVERY_OP_IP_TYPE) {
+    throw new SendBlockedError("whatsi sends OP lab reports only");
+  }
   if (isExcludedPatientType(report.patientType)) {
-    throw new Error("Send blocked: patient type ZPATIENT is excluded from WhatsApp delivery");
+    throw new SendBlockedError("Send blocked: patient type ZPATIENT is excluded from WhatsApp delivery");
   }
-
   if (!force && report.readiness === "WAITING") {
-    throw new Error("Report is not ready (no approved procedures)");
+    throw new SendBlockedError("Report is not ready (no approved results)");
   }
-  if (!force && report.readiness === "PARTIAL") {
-    const settings = await getSettings();
-    if (settings.readinessRule === "STRICT") {
-      throw new Error("Report is partial — not all procedures approved");
-    }
+  if (!force && report.readiness === "PARTIAL" && settings.readinessRule === "STRICT") {
+    throw new SendBlockedError("Report is partial — not all tests are approved yet");
+  }
+  if (!force && ["SENT", "NEEDS_REVIEW"].includes(report.status)) {
+    throw new SendBlockedError(
+      report.status === "SENT" ? "Already sent — use Resend to send it again" : "Check WhatsApp Monitor, then use Resend",
+      "ALREADY_SENT"
+    );
   }
 
-  // Same resolution path as PDF preview — queue rows often lack hisReportUrl until first resolve
-  if (!report.hisReportUrl || !isPlausibleProcIds(report.procIds)) {
-    const resolved = await resolveOrderPdfUrl(report.reportId, {
-      procIds: report.procIds || [],
-    });
-    if (!resolved.pdfUrl) {
-      throw new Error(
-        "Missing PDF URL — procedure IDs not resolved from EMR yet. Open Preview once, or try again shortly."
+  const testPhones = (settings.watiTestContactPhones || []).map(normalizePhone).filter(Boolean);
+  let deliveryPhones;
+  if (useTestSend) {
+    const overridePhones = (Array.isArray(testContactPhones) ? testContactPhones : [])
+      .map(normalizePhone)
+      .filter(Boolean);
+    if (!testPhones.length) throw new SendBlockedError("Test send mode: add test numbers in Settings");
+    if (!overridePhones.length) throw new SendBlockedError("Pick a test number for this test send");
+    const notAllowed = overridePhones.find((phone) => !testPhones.includes(phone));
+    if (notAllowed) throw new SendBlockedError(`${notAllowed} is not in the test number list`);
+    deliveryPhones = overridePhones;
+  } else {
+    const phone = effectivePhone(report.patientRef, report.phone);
+    if (!phone) throw new SendBlockedError("Patient phone missing — add a number in Contacts", "NO_PHONE");
+    if (!canSendToPhone(phone)) {
+      throw new SendBlockedError(
+        config.wati.testMode
+          ? `Send blocked: the server is in WATI test mode (WATI_TEST_MODE) and only allows ${config.wati.testPhoneOnly}`
+          : "Send blocked by WATI safety settings"
       );
     }
-    report.hisReportUrl = resolved.pdfUrl;
-    if (resolved.procIds?.length) {
-      report.procIds = resolved.procIds;
-    }
-    await report.save();
-    await upsertOrderPdfMeta(report.reportId, {
-      patientId: report.patientId,
-      procIds: report.procIds,
-      hisReportUrl: report.hisReportUrl,
-      source: resolved.source || "SEND",
-    }).catch(() => {});
+    deliveryPhones = [phone];
   }
 
-  const settings = await getSettings();
-  const useTestSend = Boolean(settings.watiTestSendMode);
-  if (triggerType !== "MANUAL") {
-    if (!settings.messageSendEnabled) {
-      throw new Error("Message sending is disabled — enable it in Settings");
-    }
-    if (useTestSend) {
-      throw new Error("Test send mode: automatic sends are disabled — use Test send on each report");
-    }
-  } else if (!useTestSend && !settings.messageSendEnabled) {
-    throw new Error("Message sending is disabled — enable it in Settings");
+  // Claim: only one sender wins. A forced resend may also take SENT / NEEDS_REVIEW rows.
+  const claimable = force ? ["PENDING", "FAILED", "SENT", "NEEDS_REVIEW"] : ["PENDING", "FAILED"];
+  const claimed = await Report.findOneAndUpdate(
+    { _id: report._id, status: { $in: claimable } },
+    { $set: { status: "QUEUED", queuedAt: new Date(), triggerType } },
+    { new: true }
+  ).populate("patientRef");
+  if (!claimed) {
+    throw new SendBlockedError("This report is already being sent or was just sent", "ALREADY_SENT");
   }
 
   const defaultTpl = await WatiTemplate.findOne({ isDefault: true, status: "ACTIVE" });
   const templateName = defaultTpl?.name || settings.watiTemplateName;
-
-  const testPhones = (settings.watiTestContactPhones || []).map(normalizePhone).filter(Boolean);
-  const overridePhones = Array.isArray(testContactPhones)
-    ? testContactPhones.map(normalizePhone).filter(Boolean)
-    : [];
-
-  let deliveryPhones;
-  if (useTestSend) {
-    if (!overridePhones.length) {
-      throw new Error("Select a WATI contact for test send");
-    }
-    deliveryPhones = overridePhones;
-    if (!testPhones.length) {
-      throw new Error("Test send mode: select WATI contacts in Settings");
-    }
-    for (const phone of deliveryPhones) {
-      if (!testPhones.includes(phone)) {
-        throw new Error(`Contact ${phone} is not in the test allowlist`);
-      }
-    }
-  } else {
-    deliveryPhones = [effectivePhone(report.patientRef, report.phone)];
-  }
-  if (!useTestSend && !deliveryPhones[0]) {
-    throw new Error("Patient phone missing");
-  }
-  if (!useTestSend && !canSendToPhone(deliveryPhones[0])) {
-    if (!config.wati.sendEnabled) {
-      throw new Error("Send blocked: set WATI_SEND_ENABLED=true in server .env and restart the API");
-    }
-    if (config.wati.testMode) {
-      throw new Error(
-        `Send blocked: WATI test mode only allows ${config.wati.testPhoneOnly} (patient is ${deliveryPhones[0]}). ` +
-          "Use Settings → Test send mode to send to a WATI contact, or set WATI_TEST_MODE=false for live delivery."
-      );
-    }
-    throw new Error("Send blocked by WATI safety settings");
-  }
-
-  report.status = "QUEUED";
-  report.triggerType = triggerType;
-  if (!useTestSend) {
-    report.attempts += 1;
-  }
-  await report.save();
-
-  const testAllowlist = useTestSend ? testPhones : null;
-  let lastResponse = null;
+  const now = new Date();
   const sentPhones = [];
+  let lastResponse = null;
 
   try {
-    for (const phone of deliveryPhones) {
-      if (!canSendToPhone(phone, { testSendMode: useTestSend, allowedTestPhones: testPhones })) {
-        throw new Error(`Send blocked for ${phone}`);
+    // Same resolution path as the PDF preview — queue rows often lack the URL until first resolve.
+    if (!claimed.hisReportUrl || !isPlausibleProcIds(claimed.procIds) || !isEmrReportUrl(claimed.hisReportUrl)) {
+      const resolved = await resolveOrderPdfUrl(claimed.reportId, { procIds: claimed.procIds || [] });
+      if (!resolved.pdfUrl) {
+        throw new Error("Missing PDF URL — procedure IDs not resolved from EMR yet. Try again shortly.");
       }
+      claimed.hisReportUrl = resolved.pdfUrl;
+      if (resolved.procIds?.length) claimed.procIds = resolved.procIds;
+      await upsertOrderPdfMeta(claimed.reportId, {
+        patientId: claimed.patientId,
+        procIds: claimed.procIds,
+        hisReportUrl: claimed.hisReportUrl,
+        source: resolved.source || "SEND",
+      }).catch(() => {});
+    }
+
+    // A private expiring whatsi link when PUBLIC_BASE_URL is set, else the EMR URL.
+    const attachmentUrl = reportLinkFor(claimed) || claimed.hisReportUrl;
+    for (const phone of deliveryPhones) {
       lastResponse = await sendLabReportMessage({
         phone,
-        patientName: report.patientName,
-        attachmentUrl: report.hisReportUrl,
+        patientName: claimed.patientName,
+        attachmentUrl,
         templateName,
-        testSendAllowlist: testAllowlist,
+        testSendAllowlist: useTestSend ? testPhones : null,
       });
       sentPhones.push(phone);
-    }
-
-    if (useTestSend) {
-      report.status = "PENDING";
-      report.lastError = "";
-    } else {
-      report.status = "SENT";
-      report.sentAt = new Date();
-      report.watiMessageId = lastResponse?.local_message_id || "";
-      report.lastError = "";
-    }
-    await report.save();
-
-    for (const phone of sentPhones) {
       await MessageLog.create({
-        reportRef: report._id,
-        reportId: report.reportId,
-        patientId: report.patientId,
-        patientName: report.patientName,
+        reportRef: claimed._id,
+        reportId: claimed.reportId,
+        patientId: claimed.patientId,
+        patientName: claimed.patientName,
         phone,
-        watiMessageId: report.watiMessageId,
+        watiLocalMessageId: lastResponse?.local_message_id || "",
         templateName,
-        reportDay: report.reportDay,
+        reportDay: claimed.reportDay,
         status: "SENT",
+        triggerType,
+        sentBy,
+        testSend: useTestSend,
         requestPayload: {
           template: templateName,
           phone,
-          patientPhone: report.phone,
+          patientPhone: claimed.phone,
           testSend: useTestSend,
-          attachmentUrl: report.hisReportUrl,
+          attachmentUrl,
+          emrReportUrl: claimed.hisReportUrl,
         },
         responsePayload: lastResponse,
         sentAt: new Date(),
+        nextCheckAt: new Date(Date.now() + 30 * 60 * 1000),
       });
     }
 
-    return { report, response: lastResponse, sentPhones, testSend: useTestSend };
-  } catch (error) {
     if (useTestSend) {
-      report.status = "PENDING";
+      // A test send never counts as delivery to the patient — back to how it was.
+      claimed.status = report.status;
     } else {
-      report.status = "FAILED";
+      Object.assign(claimed, {
+        status: "SENT",
+        sentAt: now,
+        watiMessageId: lastResponse?.local_message_id || "",
+        deliveryStatus: "sent",
+        deliveredAt: null,
+        readAt: null,
+        lastError: "",
+        failureKind: "",
+        retryable: false,
+        nextRetryAt: null,
+        sentBy,
+      });
+      claimed.attempts += 1;
     }
-    report.lastError = error.message;
-    await report.save();
+    claimed.lastAttemptAt = now;
+    await claimed.save();
+
+    return { report: claimed, response: lastResponse, sentPhones, testSend: useTestSend };
+  } catch (error) {
+    const maxAttempts = settings.retryPolicy?.maxAttempts ?? 3;
+    const { kind, retryable } = classifyFailure(error.message);
+    claimed.lastError = error.message;
+    claimed.lastAttemptAt = now;
+    if (useTestSend) {
+      claimed.status = report.status;
+    } else if (error.outcomeUnknown) {
+      // WATI may have sent it — a person checks before anything is resent.
+      claimed.status = "NEEDS_REVIEW";
+      claimed.attempts += 1;
+    } else {
+      claimed.attempts += 1;
+      const canRetry = retryable && claimed.attempts < maxAttempts;
+      Object.assign(claimed, {
+        status: "FAILED",
+        failureKind: kind,
+        retryable: canRetry,
+        nextRetryAt: canRetry ? nextRetryTime(claimed.attempts, settings, now) : null,
+      });
+    }
+    await claimed.save();
 
     await MessageLog.create({
-      reportRef: report._id,
-      reportId: report.reportId,
-      patientId: report.patientId,
-      patientName: report.patientName,
-      phone: sentPhones[0] || deliveryPhones[0] || report.phone,
+      reportRef: claimed._id,
+      reportId: claimed.reportId,
+      patientId: claimed.patientId,
+      patientName: claimed.patientName,
+      phone: deliveryPhones[sentPhones.length] || deliveryPhones[0] || claimed.phone,
       templateName,
-      reportDay: report.reportDay,
+      reportDay: claimed.reportDay,
       status: "FAILED",
       errorReason: error.message,
+      triggerType,
+      sentBy,
+      testSend: useTestSend,
+      failedAt: now,
       requestPayload: {
         template: templateName,
-        phone: sentPhones[0] || deliveryPhones[0] || report.phone,
-        patientPhone: report.phone,
+        phone: deliveryPhones[sentPhones.length] || deliveryPhones[0] || claimed.phone,
+        patientPhone: claimed.phone,
         testSend: useTestSend,
-        attachmentUrl: report.hisReportUrl,
+        attachmentUrl: claimed.hisReportUrl,
       },
-      sentAt: new Date(),
+      sentAt: now,
     });
 
     throw error;
   }
 }
 
-export async function sendPendingReports({
-  triggerType = "AUTO_EOD",
-  reportIds = null,
-  testContactPhones = null,
-  statuses = null,
-} = {}) {
-  const statusList = Array.isArray(statuses) && statuses.length
-    ? statuses
-    : ["PENDING", "FAILED"];
-  const query = { status: { $in: statusList } };
-  if (reportIds?.length) query._id = { $in: reportIds };
+// One batch at a time — the scheduler, "Send all" and bulk sends share this lock.
+let batchRunning = null;
 
-  const reports = await Report.find(query).sort({ reportReadyAt: 1 });
-  const settings = await getSettings();
-  const maxAttempts = settings.retryPolicy?.maxAttempts ?? 3;
-
-  if (triggerType !== "MANUAL") {
-    if (!settings.messageSendEnabled) {
-      return {
-        sent: 0,
-        failed: 0,
-        skipped: reports.length,
-        errors: [],
-        blocked: true,
-        reason: "Message sending is disabled — enable it in Settings",
-      };
-    }
-
-    if (settings.watiTestSendMode) {
-      return {
-        sent: 0,
-        failed: 0,
-        skipped: reports.length,
-        errors: [],
-        blocked: true,
-        reason: "Test send mode: automatic sends are disabled",
-      };
-    }
+async function runExclusive(job) {
+  if (batchRunning) {
+    return { sent: 0, failed: 0, skipped: 0, errors: [], busy: true, reason: "Another send batch is running" };
   }
+  batchRunning = job().finally(() => {
+    batchRunning = null;
+  });
+  return batchRunning;
+}
 
+async function sendEach(reports, options) {
   const results = { sent: 0, failed: 0, skipped: 0, errors: [] };
-
   for (const report of reports) {
-    if (report.attempts >= maxAttempts && report.status === "FAILED") {
-      results.skipped += 1;
-      continue;
-    }
     try {
-      await sendReportById(report._id, { triggerType, testContactPhones });
+      await sendReportById(report._id, options);
       results.sent += 1;
     } catch (error) {
-      results.failed += 1;
+      if (error.blocked) results.skipped += 1;
+      else results.failed += 1;
       results.errors.push({ reportId: report.reportId, error: error.message });
     }
   }
-
   return results;
+}
+
+/** Staff "Send selected" / "Send all due" — and the once-a-day run. */
+export async function sendPendingReports({
+  triggerType = "MANUAL",
+  reportIds = null,
+  testContactPhones = null,
+  statuses = null,
+  sentBy = "",
+} = {}) {
+  return runExclusive(async () => {
+    const statusList = Array.isArray(statuses) && statuses.length ? statuses : ["PENDING", "FAILED"];
+    const query = { status: { $in: statusList }, opIpType: DELIVERY_OP_IP_TYPE, phone: { $nin: ["", null] } };
+    if (reportIds?.length) query._id = { $in: reportIds };
+    const settings = await getSettings();
+    const maxAttempts = settings.retryPolicy?.maxAttempts ?? 3;
+    const reports = (await Report.find(query).sort({ reportReadyAt: 1 })).filter((report) => {
+      if (report.status !== "FAILED") return true;
+      // Staff picking rows by hand may retry anything; batch runs skip permanent failures.
+      return Boolean(reportIds?.length) || (report.retryable && report.attempts < maxAttempts);
+    });
+    return sendEach(reports, { triggerType, testContactPhones, sentBy });
+  });
+}
+
+/**
+ * The send worker, every minute: OP reports whose delay since approval has
+ * passed (outside quiet hours, within the age limit), plus temporary failures
+ * whose retry time has come. In END_OF_DAY mode, everything due once a day.
+ */
+export async function dispatchDueReports({ now = new Date() } = {}) {
+  const settings = await getSettings();
+  // "Message sending enabled" alone controls scheduled sends; "Automation" only
+  // syncs HIS into the queue (same meaning as the Settings screen).
+  if (!settings.messageSendEnabled) return { skipped: "sending off" };
+  if (settings.watiTestSendMode) return { skipped: "test send mode" };
+  if (!config.wati.sendEnabled) return { skipped: "WATI_SEND_ENABLED is false" };
+  if (config.wati.testMode) return { skipped: "server WATI test mode" };
+  if (isQuietTime(now, settings)) return { skipped: "quiet hours" };
+
+  const mode = effectiveMode(settings);
+  const today = reportDayKey(now);
+  // Once-a-day mode: new reports only at the first run after the set time;
+  // temporary failures are retried any time after that.
+  let includePending = true;
+  if (mode === "END_OF_DAY") {
+    const clock = parseClock(settings.endOfDayTime) || parseClock("18:00");
+    const p = partsInIst(now);
+    if (p.hour * 60 + p.minute < clock.minutes) return { skipped: "before today's send time" };
+    includePending = settings.lastEodRunDay !== today;
+  }
+
+  const maxAttempts = settings.retryPolicy?.maxAttempts ?? 3;
+  const oldest = new Date(now.getTime() - maxAgeHours(settings) * 60 * 60 * 1000);
+  const base = {
+    opIpType: DELIVERY_OP_IP_TYPE,
+    phone: { $nin: ["", null] },
+    patientType: { $ne: "ZPATIENT" },
+    readiness: settings.readinessRule === "PARTIAL" ? { $in: ["READY", "PARTIAL"] } : "READY",
+    $or: [{ reportReadyAt: { $gte: oldest } }, { reportReadyAt: null, readySeenAt: { $gte: oldest } }],
+  };
+  const candidates = await Report.find({
+    $and: [
+      base,
+      {
+        $or: [
+          ...(includePending ? [{ status: "PENDING" }] : []),
+          { status: "FAILED", retryable: true, attempts: { $lt: maxAttempts }, nextRetryAt: { $lte: now } },
+        ],
+      },
+    ],
+  })
+    .sort({ reportReadyAt: 1 })
+    .limit(200);
+
+  const due = candidates.filter(
+    (report) => report.status === "FAILED" || mode === "END_OF_DAY" || autoSendDecision(report, settings, now).due
+  );
+  if (!due.length) {
+    if (mode === "END_OF_DAY" && includePending) {
+      await AutomationSettings.updateOne({}, { $set: { lastEodRunDay: today } });
+    }
+    return { due: 0 };
+  }
+
+  const result = await runExclusive(async () => {
+    const pending = due.filter((r) => r.status === "PENDING");
+    const retries = due.filter((r) => r.status === "FAILED");
+    const first = await sendEach(pending, { triggerType: mode === "END_OF_DAY" ? "AUTO_EOD" : "AUTO_DELAYED" });
+    const second = await sendEach(retries, { triggerType: "AUTO_RETRY" });
+    return {
+      sent: first.sent + second.sent,
+      failed: first.failed + second.failed,
+      skipped: first.skipped + second.skipped,
+      errors: [...first.errors, ...second.errors],
+    };
+  });
+  if (mode === "END_OF_DAY" && includePending && !result.busy) {
+    await AutomationSettings.updateOne({}, { $set: { lastEodRunDay: today } });
+  }
+  return { due: due.length, ...result };
+}
+
+/**
+ * A report left QUEUED by a crash or restart can't be retried blindly — WATI
+ * may already have delivered it — so it waits for a person ("Check needed").
+ */
+export async function recoverStaleSends({ olderThanMs = STALE_QUEUED_MS } = {}) {
+  const cutoff = new Date(Date.now() - olderThanMs);
+  const result = await Report.updateMany(
+    { status: "QUEUED", $or: [{ queuedAt: { $lte: cutoff } }, { queuedAt: null }] },
+    {
+      $set: {
+        status: "NEEDS_REVIEW",
+        lastError: "The app stopped while sending — check WhatsApp Monitor before resending",
+      },
+    }
+  );
+  return result.modifiedCount || 0;
 }
 
 export async function aggregateQueueStats(match = {}) {
@@ -838,6 +1043,10 @@ export async function getDashboardStats({ scope = "today", date } = {}) {
     messageSendEnabled: settings.messageSendEnabled,
     mode: settings.mode,
     endOfDayTime: settings.endOfDayTime,
+    sendDelayHours: settings.sendDelayHours,
+    quietHoursEnabled: settings.quietHoursEnabled,
+    quietStart: settings.quietStart,
+    quietEnd: settings.quietEnd,
     watiSendEnabled: config.wati.sendEnabled,
     watiTestMode: config.wati.testMode,
     watiTestSendMode: settings.watiTestSendMode,

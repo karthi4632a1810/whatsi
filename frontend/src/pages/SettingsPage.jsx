@@ -90,8 +90,8 @@ export default function SettingsPage() {
             <span>
               <strong>Automation enabled</strong>
               <small>
-                Polls HIS on schedule and syncs ready reports into the WhatsApp queue — does not
-                send messages
+                Polls HIS every 15 minutes and syncs ready OP reports into the WhatsApp queue — the
+                send schedule below decides when they go out
               </small>
             </span>
           </label>
@@ -111,14 +111,8 @@ export default function SettingsPage() {
           <div className="form-grid">
             <label className="field-label">
               Patient scope
-              <select
-                value={settings.scope}
-                disabled={!settings.automationEnabled}
-                onChange={(e) => update("scope", e.target.value)}
-              >
-                <option value="ALL">All patients</option>
-                <option value="OP_ONLY">OP only</option>
-                <option value="IP_ONLY">IP only</option>
+              <select value="OP_ONLY" disabled>
+                <option value="OP_ONLY">OP only (IP goes to the investigation portal)</option>
               </select>
             </label>
             <label className="field-label">
@@ -173,34 +167,89 @@ export default function SettingsPage() {
             <label className="field-label">
               Mode
               <select
-                value={settings.mode}
+                value={settings.mode === "END_OF_DAY" || settings.mode === "CUSTOM_SCHEDULE" ? "END_OF_DAY" : "AFTER_READY"}
                 disabled={!settings.messageSendEnabled}
                 onChange={(e) => update("mode", e.target.value)}
               >
-                <option value="END_OF_DAY">End of day (recommended)</option>
-                <option value="IMMEDIATE">Immediate (after each HIS poll)</option>
+                <option value="AFTER_READY">After results are approved (recommended)</option>
+                <option value="END_OF_DAY">Once a day at a fixed time</option>
               </select>
             </label>
-            <label className="field-label">
-              End of day time (IST)
-              <input
-                type="time"
-                disabled={!settings.messageSendEnabled || settings.mode === "IMMEDIATE"}
-                value={settings.endOfDayTime || "18:00"}
-                onChange={(e) => update("endOfDayTime", e.target.value)}
-              />
-            </label>
+            {settings.mode === "END_OF_DAY" || settings.mode === "CUSTOM_SCHEDULE" ? (
+              <label className="field-label">
+                Send time (IST)
+                <input
+                  type="time"
+                  disabled={!settings.messageSendEnabled}
+                  value={settings.endOfDayTime || "18:00"}
+                  onChange={(e) => update("endOfDayTime", e.target.value)}
+                />
+              </label>
+            ) : (
+              <label className="field-label">
+                Hours after approval
+                <input
+                  type="number"
+                  min="0"
+                  max="48"
+                  step="0.5"
+                  disabled={!settings.messageSendEnabled}
+                  value={settings.sendDelayHours ?? 3}
+                  onChange={(e) => update("sendDelayHours", Number(e.target.value))}
+                />
+              </label>
+            )}
           </div>
+          <label className="toggle-field">
+            <input
+              type="checkbox"
+              checked={Boolean(settings.quietHoursEnabled)}
+              disabled={!settings.messageSendEnabled}
+              onChange={(e) => update("quietHoursEnabled", e.target.checked)}
+            />
+            <span className="toggle-track" aria-hidden />
+            <span>
+              <strong>Night hold</strong>
+              <small>No WhatsApp at night — anything due then goes out in the morning</small>
+            </span>
+          </label>
+          {settings.quietHoursEnabled ? (
+            <div className="form-grid">
+              <label className="field-label">
+                No sends from (IST)
+                <input
+                  type="time"
+                  disabled={!settings.messageSendEnabled}
+                  value={settings.quietStart || "21:00"}
+                  onChange={(e) => update("quietStart", e.target.value)}
+                />
+              </label>
+              <label className="field-label">
+                Until (IST)
+                <input
+                  type="time"
+                  disabled={!settings.messageSendEnabled}
+                  value={settings.quietEnd || "07:00"}
+                  onChange={(e) => update("quietEnd", e.target.value)}
+                />
+              </label>
+            </div>
+          ) : null}
           {settings.mode === "END_OF_DAY" || settings.mode === "CUSTOM_SCHEDULE" ? (
             <p className="field-hint">
-              Pending reports stay in the queue and send automatically once at{" "}
-              <strong>{settings.endOfDayTime || "18:00"}</strong> India time. Failed sends may be
-              retried after that time. Manual send from the queue still works anytime.
+              Pending OP reports send together once a day at{" "}
+              <strong>{settings.endOfDayTime || "18:00"}</strong> India time. Manual send from the
+              queue still works anytime.
             </p>
           ) : (
-            <p className="field-hint field-hint--warn">
-              Immediate mode sends after each HIS poll. Switch to <strong>End of day</strong> to wait
-              for the schedule.
+            <p className="field-hint">
+              Each OP report sends <strong>{settings.sendDelayHours ?? 3} hours</strong> after its last
+              result is approved
+              {settings.quietHoursEnabled
+                ? ` — not between ${settings.quietStart || "21:00"} and ${settings.quietEnd || "07:00"}; those wait until ${settings.quietEnd || "07:00"}`
+                : ""}
+              . Reports approved more than {settings.maxAutoSendAgeHours ?? 24} hours ago are not
+              sent automatically. Manual send from the queue still works anytime.
             </p>
           )}
         </section>

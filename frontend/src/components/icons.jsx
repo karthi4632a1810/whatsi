@@ -115,3 +115,12 @@ export function IconTemplate({ className }) {
     </svg>
   );
 }
+
+export function IconMonitor({ className }) {
+  return (
+    <svg className={className} viewBox="0 0 20 20" fill="none" aria-hidden>
+      <rect x="2.5" y="3.5" width="15" height="11" rx="1.8" stroke="currentColor" strokeWidth="1.4" />
+      <path d="M5 10h2l1.5-3 2 5 1.5-2H15M7 17.5h6" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}

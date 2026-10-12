@@ -5,7 +5,9 @@
   "scripts": {
     "dev": "node --watch src/index.js",
     "start": "node src/index.js",
-    "seed": "node scripts/seedAdmin.js"
+    "seed": "node scripts/seedAdmin.js",
+    "test": "node --test test/",
+    "test:integration": "node integration/send-pipeline.mjs"
   },
   "dependencies": {
     "bcryptjs": "^3.0.2",

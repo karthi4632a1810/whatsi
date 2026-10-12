@@ -43,7 +43,10 @@ function queueStatus(report, testSendMode) {
 }
 
 function formatStatusLabel(report, testSendMode) {
-  if (!testSendMode) return queueStatus(report, testSendMode);
+  if (!testSendMode) {
+    const status = queueStatus(report, testSendMode);
+    return status === "NEEDS_REVIEW" ? "CHECK NEEDED" : status;
+  }
   const attempt = report?.lastAttempt;
   if (attempt?.testSend && attempt.status === "SENT") return "TEST SENT";
   if (attempt?.testSend && attempt.status === "FAILED") return "TEST FAILED";
@@ -51,7 +54,8 @@ function formatStatusLabel(report, testSendMode) {
 }
 
 function formatStatusNote(report, testSendMode) {
-  if (!testSendMode) return null;
+  // When it goes out ("Sends 2:30 pm"), or why not — from the server's schedule.
+  if (!testSendMode) return report.scheduleNote || null;
   const attempt = report?.lastAttempt;
   if (!attempt?.testSend) return null;
 
@@ -102,6 +106,7 @@ const STATUS_OPTIONS = [
   { value: "QUEUED", label: "Queued" },
   { value: "SENT", label: "Sent" },
   { value: "FAILED", label: "Failed" },
+  { value: "NEEDS_REVIEW", label: "Check needed" },
 ];
 
 export default function ReportsPage() {
@@ -228,10 +233,15 @@ export default function ReportsPage() {
       return;
     }
 
+    const report = reports.find((r) => r._id === id);
+    // Stopped mid-send by a restart: WATI may already have it, so ask first.
+    const force = report?.status === "NEEDS_REVIEW";
+    if (force && !window.confirm("This send was interrupted — check the Message log first. Send it again?")) return;
+
     setBusy(true);
     setError("");
     try {
-      await api.sendReport(id);
+      await api.sendReport(id, { force });
       await load();
     } catch (e) {
       setError(e.message);
@@ -518,7 +528,8 @@ export default function ReportsPage() {
                     </td>
                     <td className="col-action td-action">
                       {(queueStatus(r, testSendMode) === "PENDING" ||
-                        queueStatus(r, testSendMode) === "FAILED") ? (
+                        queueStatus(r, testSendMode) === "FAILED" ||
+                        queueStatus(r, testSendMode) === "NEEDS_REVIEW") ? (
                         <button
                           type="button"
                           className={`btn-sm${testSendMode ? " btn-sm--test" : ""}`}

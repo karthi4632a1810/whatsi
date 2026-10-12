@@ -6,6 +6,7 @@ import {
   fetchOrderStatusRows,
   buildTodayLabBoard,
   looksLikeEmrOrderId,
+  DELIVERY_OP_IP_TYPE,
 } from "./emr.js";
 import { reportDayKey, parseQueryDate, buildDayTimeChunks, enumerateDays } from "../utils/dates.js";
 import { config } from "../config.js";
@@ -161,6 +162,11 @@ export async function getActiveBoardRefreshes() {
     .sort((a, b) => String(a.labDay).localeCompare(String(b.labDay)));
 }
 
+/** The running refresh job for a day (resolves when it ends), or null. */
+export function boardRefreshJob(labDay) {
+  return activeBoardRefreshes.get(labDay) || null;
+}
+
 export function startBoardRefresh(labDay) {
   const day = labDay || reportDayKey();
   if (activeBoardRefreshes.has(day)) {
@@ -260,7 +266,7 @@ async function runChunkedBoardRefresh(labDay) {
 }
 
 export async function getStoredBoard(labDay, filter = "all") {
-  const docs = await HisLabOrder.find({ labDay })
+  const docs = await HisLabOrder.find({ labDay, opIpType: DELIVERY_OP_IP_TYPE })
     .sort({ completedAt: -1, requestDate: -1 })
     .lean();
   return applyBoardFilter(docs.map(boardOrderFromDocument), filter);
@@ -429,7 +435,7 @@ export async function getHisDaySummary(labDay) {
 }
 
 function buildStoredRangeQuery(days, q = "") {
-  const query = { labDay: { $in: days } };
+  const query = { labDay: { $in: days }, opIpType: DELIVERY_OP_IP_TYPE };
   const term = String(q || "").trim();
   if (!term) return query;
 
@@ -583,4 +589,19 @@ export async function searchLabBoardRange({ fromRaw, toRaw, filter = "all", q = 
     emrDaysLoaded,
     source,
   };
+}
+
+/**
+ * Startup clean-up: a refresh that was running when the app stopped can never
+ * finish, and IP orders cached before whatsi went OP-only are dropped.
+ */
+export async function recoverBoardState() {
+  const [stuck, removed] = await Promise.all([
+    LabBoardDay.updateMany(
+      { refreshStatus: "running" },
+      { $set: { refreshStatus: "error", refreshError: "Interrupted by a restart — refresh again" } }
+    ),
+    HisLabOrder.deleteMany({ opIpType: { $ne: DELIVERY_OP_IP_TYPE } }),
+  ]);
+  return { stuckRefreshes: stuck.modifiedCount || 0, nonOpOrdersRemoved: removed.deletedCount || 0 };
 }

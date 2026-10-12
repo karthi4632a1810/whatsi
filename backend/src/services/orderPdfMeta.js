@@ -1,5 +1,5 @@
 import { OrderPdfMeta, Report } from "../models/index.js";
-import { buildLabReportUrl, isPlausibleProcIds } from "./emr.js";
+import { buildLabReportUrl, isEmrReportUrl, isPlausibleProcIds } from "./emr.js";
 import { parseLabReportUrl } from "../utils/labReportUrl.js";
 
 export async function getOrderPdfMeta(orderId) {
@@ -24,6 +24,10 @@ export async function upsertOrderPdfMeta(orderId, payload = {}) {
 
   if (!hisReportUrl && procIds.length) {
     hisReportUrl = buildLabReportUrl(id, procIds);
+  }
+
+  if (hisReportUrl && !isEmrReportUrl(hisReportUrl)) {
+    throw new Error("The report link must be an EMR LabReport URL");
   }
 
   if (!isPlausibleProcIds(procIds) || !hisReportUrl) {

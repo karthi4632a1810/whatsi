@@ -1,135 +1,112 @@
 import cron from "node-cron";
 import { config } from "../config.js";
 import {
+  dispatchDueReports,
   getSettings,
-  runEmrPoll,
+  recoverStaleSends,
   runBacklogCatchUp,
-  sendPendingReports,
+  runEmrPoll,
 } from "../services/reports.js";
-import { partsInIst, reportDayKey } from "../utils/dates.js";
+import { recoverBoardState } from "../services/hisBoardStore.js";
+import { runDeliveryChecks } from "../services/delivery.js";
 
-let lastEodRunKey = "";
+// What the jobs last did — shown on the dashboard and in Settings.
+const jobState = {
+  emrPoll: { lastStartedAt: null, lastFinishedAt: null, lastResult: null, lastError: "" },
+  sender: { lastRunAt: null, lastResult: null, lastSentAt: null, lastError: "" },
+  delivery: { lastRunAt: null, lastResult: null, lastError: "" },
+};
 
-function parseClock(value, fallback = "18:00") {
-  const [hh, mm] = String(value || fallback)
-    .split(":")
-    .map((part) => Number(part));
-  return {
-    hour: Number.isFinite(hh) ? hh : 18,
-    minute: Number.isFinite(mm) ? mm : 0,
-  };
+export function getJobState() {
+  return jobState;
 }
 
-/** True when India time is at/after today's scheduled send time. */
-function isAtOrPastSendTime(endOfDayTime) {
-  const now = partsInIst(new Date());
-  const { hour, minute } = parseClock(endOfDayTime);
-  return now.hour > hour || (now.hour === hour && now.minute >= minute);
+let emrPollRunning = false;
+let senderRunning = false;
+
+async function emrPollJob() {
+  if (emrPollRunning) return;
+  const settings = await getSettings();
+  if (!settings.automationEnabled) return;
+  emrPollRunning = true;
+  jobState.emrPoll.lastStartedAt = new Date();
+  try {
+    // 1) Today: refresh the OP board + queue newly approved reports
+    const today = await runEmrPoll();
+    // 2) Past N days: orders that became ready after their lab day
+    const backlog =
+      config.emr.backlogLookbackDays > 0
+        ? await runBacklogCatchUp({ lookbackDays: config.emr.backlogLookbackDays })
+        : null;
+    jobState.emrPoll.lastResult = {
+      today: {
+        created: today.created,
+        updated: today.updated,
+        held: today.held,
+        candidates: today.candidates,
+        boardTotal: today.boardTotal,
+      },
+      backlog: backlog ? { days: backlog.days, created: backlog.created, updated: backlog.updated } : null,
+    };
+    jobState.emrPoll.lastError = "";
+    console.log("[cron] HIS check done", jobState.emrPoll.lastResult.today);
+  } catch (error) {
+    jobState.emrPoll.lastError = error.message;
+    console.error("[cron] HIS check failed", error.message);
+  } finally {
+    jobState.emrPoll.lastFinishedAt = new Date();
+    emrPollRunning = false;
+  }
+}
+
+async function senderJob() {
+  if (senderRunning) return;
+  senderRunning = true;
+  try {
+    await recoverStaleSends();
+    const result = await dispatchDueReports();
+    jobState.sender.lastRunAt = new Date();
+    jobState.sender.lastResult = result;
+    jobState.sender.lastError = "";
+    if (result.sent) jobState.sender.lastSentAt = new Date();
+    if (result.sent || result.failed) {
+      console.log("[cron] WhatsApp send run", { due: result.due, sent: result.sent, failed: result.failed });
+    }
+  } catch (error) {
+    jobState.sender.lastError = error.message;
+    console.error("[cron] WhatsApp send run failed", error.message);
+  } finally {
+    senderRunning = false;
+  }
+}
+
+async function deliveryJob() {
+  try {
+    const result = await runDeliveryChecks();
+    jobState.delivery.lastRunAt = new Date();
+    jobState.delivery.lastResult = result;
+    jobState.delivery.lastError = result.error || "";
+  } catch (error) {
+    jobState.delivery.lastError = error.message;
+  }
+}
+
+/** Clean-up for anything a restart interrupted. Runs once before the jobs start. */
+export async function recoverAfterRestart() {
+  // Nothing can still be in flight right after a start.
+  const reviewed = await recoverStaleSends({ olderThanMs: 0 });
+  const board = await recoverBoardState();
+  if (reviewed || board.stuckRefreshes || board.nonOpOrdersRemoved) {
+    console.log("[startup] recovered", { sendsToCheck: reviewed, ...board });
+  }
 }
 
 export function startScheduler() {
   if (config.emr.pollEnabled) {
-    cron.schedule(config.emr.pollCron, async () => {
-      try {
-        const settings = await getSettings();
-        if (!settings.automationEnabled) return;
-
-        // 1) Today: refresh board + sync READY → queue
-        console.log("[cron] EMR poll start (today)");
-        const todayResult = await runEmrPoll({
-          autoSend: settings.mode === "IMMEDIATE",
-        });
-        console.log("[cron] EMR poll done (today)", todayResult.boardRefresh || {}, {
-          created: todayResult.created,
-          updated: todayResult.updated,
-          candidates: todayResult.candidates,
-        });
-
-        // 2) Past N days: catch late completions (e.g. 15 Jul order ready on 17 Jul)
-        const lookback = config.emr.backlogLookbackDays;
-        if (lookback > 0) {
-          console.log(`[cron] backlog catch-up start (last ${lookback} days)`);
-          const backlog = await runBacklogCatchUp({ lookbackDays: lookback });
-          console.log("[cron] backlog catch-up done", {
-            days: backlog.days,
-            created: backlog.created,
-            updated: backlog.updated,
-          });
-
-          // Immediate mode: also send anything newly queued from backlog
-          if (
-            settings.mode === "IMMEDIATE" &&
-            settings.messageSendEnabled &&
-            !settings.watiTestSendMode &&
-            (backlog.created > 0 || backlog.updated > 0)
-          ) {
-            const sendResult = await sendPendingReports({ triggerType: "AUTO_IMMEDIATE" });
-            console.log("[cron] backlog immediate send", sendResult);
-          }
-        }
-      } catch (error) {
-        console.error("[cron] EMR poll failed", error.message);
-      }
-    });
-    console.log(
-      `[cron] EMR poll scheduled: ${config.emr.pollCron} (today + ${config.emr.backlogLookbackDays} day backlog when Automation is ON)`
-    );
+    cron.schedule(config.emr.pollCron, emrPollJob, { noOverlap: true });
+    console.log(`[cron] HIS check scheduled: ${config.emr.pollCron} (when Automatic mode is on)`);
   }
-
-  // End-of-day send — India time, once per day at the configured clock
-  // Sends ALL pending queue rows (any reportDay), so late 15 Jul READY items
-  // synced on 17 Jul go out at 17 Jul's EOD time.
-  cron.schedule("* * * * *", async () => {
-    try {
-      const settings = await getSettings();
-      if (!settings.messageSendEnabled || settings.watiTestSendMode) return;
-      if (settings.mode !== "END_OF_DAY" && settings.mode !== "CUSTOM_SCHEDULE") return;
-
-      const now = partsInIst(new Date());
-      const { hour, minute } = parseClock(settings.endOfDayTime);
-      if (now.hour !== hour || now.minute !== minute) return;
-
-      const key = `${reportDayKey()}-${hour}:${minute}`;
-      if (lastEodRunKey === key) return;
-
-      lastEodRunKey = key;
-      console.log(`[cron] scheduled send start (${settings.endOfDayTime} IST)`);
-      const result = await sendPendingReports({ triggerType: "AUTO_EOD" });
-      console.log("[cron] scheduled send done", result);
-    } catch (error) {
-      console.error("[cron] scheduled send failed", error.message);
-    }
-  });
-
-  // Retries — never dump fresh PENDING before the schedule
-  cron.schedule(config.automation.retryCron, async () => {
-    try {
-      const settings = await getSettings();
-      if (!settings.messageSendEnabled || settings.watiTestSendMode) return;
-
-      if (settings.mode === "IMMEDIATE") {
-        const result = await sendPendingReports({
-          triggerType: "AUTO_EOD",
-          statuses: ["FAILED"],
-        });
-        if (result.sent || result.failed) {
-          console.log("[cron] retry (failed only, immediate mode)", result);
-        }
-        return;
-      }
-
-      // END_OF_DAY: only retry failures after the day's send time has passed
-      if (!isAtOrPastSendTime(settings.endOfDayTime)) return;
-
-      const result = await sendPendingReports({
-        triggerType: "AUTO_EOD",
-        statuses: ["FAILED"],
-      });
-      if (result.sent || result.failed) {
-        console.log("[cron] retry (failed only, after schedule)", result);
-      }
-    } catch (error) {
-      console.error("[cron] retry failed", error.message);
-    }
-  });
+  cron.schedule("* * * * *", senderJob, { noOverlap: true });
+  cron.schedule("*/2 * * * *", deliveryJob, { noOverlap: true });
+  console.log("[cron] WhatsApp sender every minute · delivery checks every 2 minutes");
 }

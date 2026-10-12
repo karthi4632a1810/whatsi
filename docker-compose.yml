@@ -6,10 +6,20 @@ services:
   mongo:
     image: mongo:7
     container_name: whatsi-mongo
+    # Loopback only: MongoDB has no password, so it must not be reachable from
+    # the network. The backend talks to it over the Docker network (mongo:27017).
     ports:
-      - "3002:27017"
+      - "127.0.0.1:3002:27017"
+    # With a root user set, the image starts mongod with --auth. On an empty
+    # volume it also creates the root user and runs mongo-init/create-app-user.js.
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USER:?set MONGO_ROOT_USER in .env}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:?set MONGO_ROOT_PASSWORD in .env}
+      MONGO_APP_USER: ${MONGO_APP_USER:?set MONGO_APP_USER in .env}
+      MONGO_APP_PASSWORD: ${MONGO_APP_PASSWORD:?set MONGO_APP_PASSWORD in .env}
     volumes:
       - mongo_data:/data/db
+      - ./mongo-init/create-app-user.js:/docker-entrypoint-initdb.d/create-app-user.js:ro
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
@@ -23,14 +33,27 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: whatsi-backend
+    # Loopback only: browsers (and the WATI webhook) go through nginx on 1002.
     ports:
-      - "2002:5001"
+      - "127.0.0.1:2002:5001"
     env_file:
       - .env
     environment:
       PORT: "5001"
-      MONGODB_URI: mongodb://mongo:27017/whatsi
+      MONGODB_URI: mongodb://${MONGO_APP_USER}:${MONGO_APP_PASSWORD}@mongo:27017/whatsi?authSource=whatsi
       TZ: Asia/Kolkata
+      NODE_ENV: production
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:5001/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
     dns:
       - 8.8.8.8
       - 1.1.1.1
@@ -47,7 +70,26 @@ services:
     ports:
       - "1002:80"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Nightly mongodump to ./backups (02:00 India time, 14 days kept).
+  backup:
+    image: mongo:7
+    container_name: whatsi-backup
+    user: "${BACKUP_UID:-1000}:${BACKUP_GID:-1000}"
+    entrypoint: ["/usr/local/bin/backup.sh"]
+    environment:
+      MONGO_URI: mongodb://${MONGO_APP_USER}:${MONGO_APP_PASSWORD}@mongo:27017/whatsi?authSource=whatsi
+      KEEP_DAYS: "14"
+      BACKUP_AT: "02:00"
+    volumes:
+      - ./mongo-init/backup.sh:/usr/local/bin/backup.sh:ro
+      - ./backups:/backups
+    depends_on:
+      mongo:
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:

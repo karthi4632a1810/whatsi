@@ -45,10 +45,18 @@ function formatWatiNetworkError(error, action) {
   return `WATI ${action} failed: ${detail}. Check that this server/container can reach ${config.wati.baseUrl}`;
 }
 
+const WATI_TIMEOUT_MS = 30_000;
+
 async function watiFetch(url, options, action) {
   try {
-    return await fetch(url, options);
+    return await fetch(url, { ...options, signal: AbortSignal.timeout(WATI_TIMEOUT_MS) });
   } catch (error) {
+    // A send that timed out may still have reached WATI — callers must not blindly retry it.
+    if (error?.name === "TimeoutError") {
+      const timeout = new Error(`WATI ${action} timed out after ${WATI_TIMEOUT_MS / 1000}s — outcome unknown`);
+      timeout.outcomeUnknown = true;
+      throw timeout;
+    }
     throw new Error(formatWatiNetworkError(error, action));
   }
 }
@@ -183,34 +191,43 @@ export async function sendLabReportMessage({
   );
   const result = await watiPost("api/v1/sendTemplateMessage", payload, { whatsappNumber });
   assertWatiJsonResponse(result, "sendTemplateMessage");
-  if (!result.response.ok && result.response.status >= 500) {
+  const { response, data } = result;
+  if (response.status === 429) {
+    throw new Error("WATI API usage limit exceeded (429) — will retry later");
+  }
+  if (!response.ok) {
     throw new Error(
-      `WATI send failed (${result.response.status}): ${JSON.stringify(result.data)}`
+      `WATI send failed (${response.status}): ${data?.info || data?.message || JSON.stringify(data).slice(0, 200)}`
     );
   }
-  if (!result.response.ok) {
-    await incrementWatiApiUsage({ method: "POST", endpoint: "api/v1/sendTemplateMessage" }).catch(
-      () => {}
-    );
-    const retry = await watiPost(
-      "api/v1/sendTemplateMessage",
-      { ...payload, customParams: payload.parameters },
-      { whatsappNumber }
-    );
-    assertWatiJsonResponse(retry, "sendTemplateMessage");
-    if (!retry.response.ok) {
-      throw new Error(
-        `WATI send failed (${retry.response.status}): ${JSON.stringify(retry.data)}`
-      );
-    }
-    return retry.data;
-  }
-  if (result.data?.result !== true && result.data?.ok !== true) {
+  if (data?.result !== true && data?.ok !== true) {
     throw new Error(
-      `WATI send rejected: ${result.data?.info || result.data?.message || JSON.stringify(result.data).slice(0, 200)}`
+      `WATI send rejected: ${data?.info || data?.message || JSON.stringify(data).slice(0, 200)}`
     );
   }
-  return result.data;
+  if (data?.validWhatsAppNumber === false) {
+    throw new Error(`+${whatsappNumber} is not a WhatsApp number`);
+  }
+  return data;
+}
+
+/** WATI's message list for one number (used by the delivery status checks). */
+export async function fetchWatiMessages(whatsappNumber, pageSize = 20) {
+  await incrementWatiApiUsage({ method: "GET", endpoint: "api/v1/getMessages" }).catch(() => {});
+  const { response, data } = await watiGet(`api/v1/getMessages/${normalizePhone(whatsappNumber)}`, {
+    pageSize,
+    pageNumber: 1,
+  });
+  if (response.status === 429) {
+    const error = new Error("WATI API usage limit exceeded (429)");
+    error.rateLimited = true;
+    throw error;
+  }
+  if (!response.ok) throw new Error(`WATI getMessages ${response.status}`);
+  assertWatiJsonResponse({ data }, "getMessages");
+  return (data?.messages?.items || []).filter(
+    (m) => m.eventType === "broadcastMessage" || m.eventType === "message"
+  );
 }
 
 export async function testWatiConnection() {

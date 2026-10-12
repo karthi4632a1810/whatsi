@@ -14,22 +14,33 @@ import messageRoutes from "./routes/messages.js";
 import settingsRoutes from "./routes/settings.js";
 import watiRoutes from "./routes/wati.js";
 import webhookRoutes from "./routes/webhooks.js";
-import { startScheduler } from "./jobs/scheduler.js";
+import opRoutes from "./routes/op.js";
+import publicRoutes from "./routes/public.js";
+import monitorRoutes from "./routes/monitor.js";
+import { recoverAfterRestart, startScheduler } from "./jobs/scheduler.js";
+import { migrateSettings } from "./services/reports.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const app = express();
-app.use(cors());
-app.use(express.json());
+app.disable("x-powered-by");
+// Same-origin by default (the UI is served through nginx on the same host);
+// list other origins in CORS_ORIGINS if the API must be called from elsewhere.
+app.use(cors({ origin: config.corsOrigins.length ? config.corsOrigins : false }));
+app.use(express.json({ limit: "1mb" }));
 
 app.get("/api/health", (_req, res) => {
   res.json({ ok: true, service: "whatsi-api" });
 });
 
 app.use("/api/auth", authRoutes);
+// No login: signed, expiring report links opened by WATI / the patient's phone.
+app.use("/api/public", publicRoutes);
 app.use("/api/webhooks", webhookRoutes);
 
 app.use("/api", authRequired);
+app.use("/api/monitor", monitorRoutes);
+app.use("/api", opRoutes);
 app.use("/api", reportRoutes);
 app.use("/api/patients", patientRoutes);
 app.use("/api/messages", messageRoutes);
@@ -44,9 +55,18 @@ app.get(/^(?!\/api).*/, (_req, res) => {
   });
 });
 
+app.use("/api", (_req, res) => res.status(404).json({ error: "Not found" }));
+// Last-resort error handler: a JSON message, never a stack trace.
+app.use((error, _req, res, _next) => {
+  console.error("[api] unhandled error", error);
+  res.status(error.status || 500).json({ error: error.expose ? error.message : "Something went wrong — please try again" });
+});
+
 await connectDb();
 await ensureAutomationSettings();
+await migrateSettings();
 await ensureDefaultTemplate();
+await recoverAfterRestart();
 startScheduler();
 
 app.listen(config.port, () => {
