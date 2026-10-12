@@ -823,6 +823,101 @@ select:focus {
   color: #fff;
 }
 
+/* ——— HIS board: advanced search & filters ——— */
+
+.adv-toggle[aria-expanded="true"] {
+  border-color: var(--navy-mid);
+  color: var(--navy-mid);
+}
+
+.adv-count {
+  display: inline-grid;
+  place-items: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--navy-mid);
+  color: #fff;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.adv-filters {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 12px;
+  padding: 14px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+}
+
+.adv-filters select,
+.adv-filters input {
+  width: 100%;
+  min-width: 0;
+}
+
+.adv-foot {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.adv-foot code {
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  font-size: 0.78rem;
+}
+
+.active-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+/* These use .filter-pill to stay clear of the app-wide button look. */
+.active-filters .filter-pill.active-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px 5px 12px;
+  background: var(--clinical-soft);
+  color: var(--clinical);
+  font-weight: 600;
+}
+
+.active-filters .filter-pill.active-chip:hover {
+  background: var(--bad-soft);
+  color: var(--bad);
+}
+
+.active-chip-x {
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.active-filters .filter-pill.clear-all,
+.adv-foot .filter-pill.adv-reset {
+  padding: 5px 8px;
+  color: var(--muted);
+  text-decoration: underline;
+}
+
+.active-filters .filter-pill.clear-all:hover,
+.adv-foot .filter-pill.adv-reset:hover {
+  color: var(--ink);
+}
+
 button:not(.filter-pill),
 .button {
   display: inline-flex;

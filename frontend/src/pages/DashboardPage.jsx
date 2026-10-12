@@ -4,7 +4,14 @@ import { HisBadge } from "../components/Badge.jsx";
 import EmptyState from "../components/EmptyState.jsx";
 import PageHeader from "../components/PageHeader.jsx";
 import PdfPreviewModal from "../components/PdfPreviewModal.jsx";
-import { applyHisFilter, computeHisSummary, filterHisOrders } from "../lib/hisFilters.js";
+import {
+  EMPTY_ADVANCED,
+  SEARCH_FIELDS,
+  buildFilterOptions,
+  computeHisSummary,
+  countActiveAdvanced,
+  filterHisBoard,
+} from "../lib/hisFilters.js";
 import { formatEmrError } from "../lib/emrErrors.js";
 import { formatPatientName } from "../lib/format.js";
 
@@ -165,6 +172,96 @@ function SystemStatus({ health, stats }) {
   );
 }
 
+const ADVANCED_LABELS = {
+  department: "Dept",
+  hisStatus: "HIS status",
+  readiness: "Ready",
+  whatsapp: "WhatsApp",
+  patientType: "Patient type",
+  tests: "Tests",
+  mobile: "Mobile",
+};
+
+function SelectFilter({ label, value, options, onChange }) {
+  // Keep a chosen value visible after a date change removes it from the day's options.
+  const list =
+    value && !options.some((o) => o.value === value) ? [...options, { value, count: 0 }] : options;
+  return (
+    <label className="field-label">
+      {label}
+      <select value={value} onChange={(e) => onChange(e.target.value)}>
+        <option value="">Any</option>
+        {list.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label || o.value} ({o.count})
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+function AdvancedFilters({ value, options, onChange, onReset }) {
+  const set = (key) => (next) => onChange({ ...value, [key]: next });
+  return (
+    <div className="adv-filters" id="his-adv-filters">
+      <SelectFilter label="Department" value={value.department} options={options.department} onChange={set("department")} />
+      <SelectFilter label="HIS status" value={value.hisStatus} options={options.hisStatus} onChange={set("hisStatus")} />
+      <SelectFilter label="Ready" value={value.readiness} options={options.readiness} onChange={set("readiness")} />
+      <SelectFilter label="WhatsApp" value={value.whatsapp} options={options.whatsapp} onChange={set("whatsapp")} />
+      <SelectFilter label="Tests approved" value={value.tests} options={options.tests} onChange={set("tests")} />
+      <SelectFilter label="Mobile" value={value.mobile} options={options.mobile} onChange={set("mobile")} />
+      {options.patientType.length > 1 || value.patientType ? (
+        <SelectFilter label="Patient type" value={value.patientType} options={options.patientType} onChange={set("patientType")} />
+      ) : null}
+      <label className="field-label">
+        Completed from
+        <input type="time" value={value.timeFrom} onChange={(e) => set("timeFrom")(e.target.value)} />
+      </label>
+      <label className="field-label">
+        Completed to
+        <input type="time" value={value.timeTo} onChange={(e) => set("timeTo")(e.target.value)} />
+      </label>
+      <div className="adv-foot">
+        <span>
+          Tip: type several words in Search to narrow down, e.g. <code>latha cbc</code>. Counts are
+          for the whole day.
+        </span>
+        <button type="button" className="filter-pill adv-reset" onClick={onReset}>
+          Reset filters
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ActiveFilters({ chips, onClearAll }) {
+  if (!chips.length) return null;
+  return (
+    <div className="active-filters" aria-label="Active filters">
+      {chips.map((chip) => (
+        <button
+          key={chip.key}
+          type="button"
+          className="filter-pill active-chip"
+          onClick={chip.clear}
+          aria-label={`Remove filter ${chip.label}`}
+        >
+          {chip.label}
+          <span className="active-chip-x" aria-hidden>
+            ×
+          </span>
+        </button>
+      ))}
+      {chips.length > 1 ? (
+        <button type="button" className="filter-pill clear-all" onClick={onClearAll}>
+          Clear all
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
 function TableSkeleton() {
   return (
     <div className="table-wrap">
@@ -198,6 +295,9 @@ export default function DashboardPage() {
   const [allOrders, setAllOrders] = useState([]);
   const [filter, setFilter] = useState("all");
   const [search, setSearch] = useState("");
+  const [searchField, setSearchField] = useState("all");
+  const [advanced, setAdvanced] = useState(EMPTY_ADVANCED);
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const [date, setDate] = useState(todayValue);
   const [fetchedAt, setFetchedAt] = useState(null);
   const [changedIds, setChangedIds] = useState(() => new Set());
@@ -215,10 +315,56 @@ export default function DashboardPage() {
 
   const isToday = date === todayValue();
   const filteredOrders = useMemo(
-    () => filterHisOrders(allOrders, { filter, query: search }),
-    [allOrders, filter, search]
+    () => filterHisBoard(allOrders, { filter, query: search, field: searchField, advanced }),
+    [allOrders, filter, search, searchField, advanced]
   );
   const summary = useMemo(() => computeHisSummary(allOrders), [allOrders]);
+  const filterOptions = useMemo(() => buildFilterOptions(allOrders), [allOrders]);
+  const advancedCount = countActiveAdvanced(advanced);
+  const searchFieldLabel = SEARCH_FIELDS.find((f) => f.value === searchField)?.label;
+
+  const activeChips = useMemo(() => {
+    const chips = [];
+    if (search.trim()) {
+      chips.push({
+        key: "search",
+        label: `${searchField === "all" ? "Search" : searchFieldLabel}: "${search.trim()}"`,
+        clear: () => setSearch(""),
+      });
+    }
+    if (filter !== "all") {
+      chips.push({
+        key: "status",
+        label: STATUS_FILTERS.find((f) => f.value === filter)?.label || filter,
+        clear: () => setFilter("all"),
+      });
+    }
+    for (const [key, name] of Object.entries(ADVANCED_LABELS)) {
+      const value = advanced[key];
+      if (!value) continue;
+      const shown = filterOptions[key]?.find((o) => o.value === value)?.label || value;
+      chips.push({
+        key,
+        label: `${name}: ${shown}`,
+        clear: () => setAdvanced((prev) => ({ ...prev, [key]: "" })),
+      });
+    }
+    if (advanced.timeFrom || advanced.timeTo) {
+      chips.push({
+        key: "time",
+        label: `Completed ${advanced.timeFrom || "start"}–${advanced.timeTo || "end"}`,
+        clear: () => setAdvanced((prev) => ({ ...prev, timeFrom: "", timeTo: "" })),
+      });
+    }
+    return chips;
+  }, [search, searchField, searchFieldLabel, filter, advanced, filterOptions]);
+
+  function clearAllFilters() {
+    setSearch("");
+    setSearchField("all");
+    setFilter("all");
+    setAdvanced(EMPTY_ADVANCED);
+  }
 
   const applyOrders = useCallback((orders, { highlight = true } = {}) => {
     const next = orders || [];
@@ -413,16 +559,40 @@ export default function DashboardPage() {
         <div className="toolbar">
           <div className="toolbar-row">
             <label className="field-label field-label--grow">
-              Search UHID / order
+              Search
               <input
                 className="search-input"
                 type="search"
-                placeholder="UHID, order ID, name, or mobile"
+                placeholder={
+                  searchField === "all"
+                    ? "Name, UHID, order, mobile, dept, test…"
+                    : `Search ${searchFieldLabel.toLowerCase()}…`
+                }
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                aria-label="Search by UHID, order ID, patient name, or mobile"
+                aria-label={`Search orders by ${searchFieldLabel.toLowerCase()}`}
               />
             </label>
+            <label className="field-label">
+              Search in
+              <select value={searchField} onChange={(e) => setSearchField(e.target.value)}>
+                {SEARCH_FIELDS.map((f) => (
+                  <option key={f.value} value={f.value}>
+                    {f.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button
+              className="secondary adv-toggle"
+              type="button"
+              aria-expanded={showAdvanced}
+              aria-controls="his-adv-filters"
+              onClick={() => setShowAdvanced((v) => !v)}
+            >
+              Filters
+              {advancedCount ? <span className="adv-count">{advancedCount}</span> : null}
+            </button>
             <label className="field-label">
               Date
               <input
@@ -454,6 +624,15 @@ export default function DashboardPage() {
               ))}
             </div>
           </div>
+          {showAdvanced ? (
+            <AdvancedFilters
+              value={advanced}
+              options={filterOptions}
+              onChange={setAdvanced}
+              onReset={() => setAdvanced(EMPTY_ADVANCED)}
+            />
+          ) : null}
+          <ActiveFilters chips={activeChips} onClearAll={clearAllFilters} />
           <div className="toolbar-row toolbar-row--actions">
             <div className="toolbar-actions">
               <button type="button" onClick={() => refreshFromHis()} disabled={loadingEmr}>
@@ -574,11 +753,15 @@ export default function DashboardPage() {
           </div>
         ) : (
           <EmptyState
-            title="No orders match this filter"
+            title={allOrders.length ? "No orders match these filters" : "No orders for this day"}
             hint={
-              search.trim()
-                ? "Try a different UHID, order ID, or clear the search box."
-                : "Try a different status filter or pick another date."
+              activeChips.length ? (
+                <button type="button" className="secondary" onClick={clearAllFilters}>
+                  Clear all filters
+                </button>
+              ) : (
+                "Pick another date or refresh from HIS."
+              )
             }
           />
         )}
