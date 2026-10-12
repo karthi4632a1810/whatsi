@@ -6,6 +6,7 @@ import {
   extractProcIdFromHtml,
   extractProcIdsFromHtmlDocument,
   getRowValue,
+  parseLabResult,
   parseOpIpType,
   stripHtml,
 } from "../utils/emrParse.js";
@@ -130,6 +131,10 @@ export function mapEmrRow(row) {
     patientType: getRowValue(row, "PATIENT TYPE").toUpperCase(),
     completedAt: parseEmrDate(getRowValue(row, "COMPLETED DATE")),
     requestDate: parseEmrDate(getRowValue(row, "REQUEST DATE")),
+    ...parseLabResult(getRowValue(row, "RESULT")),
+    age: stripHtml(getRowValue(row, "AGE")),
+    gender: stripHtml(getRowValue(row, "GENDER")),
+    doctor: stripHtml(getRowValue(row, "ORDERING DOCTOR", "DOCTOR")),
   };
 }
 
@@ -489,6 +494,9 @@ export function buildTodayLabBoard(rows) {
       opIpType: first.opIpType,
       opIpRaw: first.opIpRaw,
       patientType: first.patientType || "",
+      age: first.age || "",
+      gender: first.gender || "",
+      doctor: first.doctor || "",
       hisStatus: dominantHisStatus(statusCounts),
       statusCounts,
       procedureTotal: active.length,
@@ -502,6 +510,10 @@ export function buildTodayLabBoard(rows) {
         status: p.status,
         procId: p.procId || null,
         completedAt: p.completedAt,
+        // Only approved values are final; earlier ones can still change.
+        result: p.status === "RESULT APPROVED" ? p.result || "" : "",
+        value: p.status === "RESULT APPROVED" && Number.isFinite(p.value) ? p.value : null,
+        unit: p.status === "RESULT APPROVED" ? p.unit || "" : "",
       })),
     };
   });

@@ -9,6 +9,7 @@ import {
 } from "../services/reports.js";
 import { recoverBoardState } from "../services/hisBoardStore.js";
 import { runDeliveryChecks } from "../services/delivery.js";
+import { isReadOnlyMode } from "../services/appSettings.js";
 
 // What the jobs last did — shown on the dashboard and in Settings.
 const jobState = {
@@ -61,6 +62,12 @@ async function emrPollJob() {
 
 async function senderJob() {
   if (senderRunning) return;
+  // Master Settings → Read-only mode pauses automatic sending; due reports go out once it's off.
+  if (isReadOnlyMode()) {
+    jobState.sender.lastRunAt = new Date();
+    jobState.sender.lastResult = { paused: "read-only mode" };
+    return;
+  }
   senderRunning = true;
   try {
     await recoverStaleSends();

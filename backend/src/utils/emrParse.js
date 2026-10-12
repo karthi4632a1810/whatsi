@@ -124,6 +124,26 @@ export function parseOpIpType(value) {
 }
 
 /**
+ * The HIS RESULT column: " 2.25 10*3/µl", " 31.2 %", " Negative", " --".
+ * → { result: "2.25 10*3/µl", value: 2.25, unit: "10*3/µl" }; value is null
+ * for text results, and an empty / "--" result is "".
+ */
+export function parseLabResult(raw) {
+  const result = stripHtml(raw).replace(/\s+/g, " ").trim();
+  if (!result || /^-+$/.test(result)) return { result: "", value: null, unit: "" };
+  const m = result.match(/^([<>]=?\s*)?(-?\d+(?:\.\d+)?)(?:\s+(.*))?$/);
+  if (!m) return { result, value: null, unit: "" };
+  return { result, value: Number(m[2]), unit: (m[3] || "").trim() };
+}
+
+/** "ABSOLUTE LYMPHOCYTE COUNT [COMPLETE BLOOD COUNT]" → { test, group }. */
+export function splitTestName(name) {
+  const raw = String(name || "").trim();
+  const m = raw.match(/^(.*?)\s*\[([^\]]+)\]\s*$/);
+  return m ? { test: m[1].replace(/[.\s]+$/, "").trim(), group: m[2].trim() } : { test: raw, group: "" };
+}
+
+/**
  * EMR rows are result lines ("ABSOLUTE LYMPHOCYTE COUNT [COMPLETE BLOOD COUNT]");
  * the name in brackets is the test they belong to. Groups lines into tests:
  * [{ name, total, approved, completedAt }] — a test is approved when all its lines are.

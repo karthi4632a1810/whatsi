@@ -118,8 +118,15 @@ const hisLabOrderSchema = new mongoose.Schema(
         status: String,
         procId: Number,
         completedAt: Date,
+        // RESULT column from HIS, e.g. "2.25 10*3/µl" → value 2.25, unit "10*3/µl" (Lab Finder).
+        result: String,
+        value: Number,
+        unit: String,
       },
     ],
+    age: { type: String, default: "" },
+    gender: { type: String, default: "" },
+    doctor: { type: String, default: "" },
     statusCounts: { type: mongoose.Schema.Types.Mixed, default: {} },
     requestDate: { type: Date },
     completedAt: { type: Date },
@@ -131,6 +138,7 @@ const hisLabOrderSchema = new mongoose.Schema(
 
 hisLabOrderSchema.index({ labDay: 1, orderId: 1 }, { unique: true });
 hisLabOrderSchema.index({ labDay: 1, readiness: 1 });
+hisLabOrderSchema.index({ "procedures.name": 1, labDay: -1 });
 
 const labBoardDaySchema = new mongoose.Schema(
   {
@@ -256,18 +264,41 @@ const watiTemplateSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+/**
+ * Staff accounts (services/users.js). role "admin" = super admin: full access,
+ * manages users and Master Settings. Everyone else has per-screen permissions.
+ * Sign-in is by username or email.
+ */
 const userSchema = new mongoose.Schema(
   {
-    email: { type: String, required: true, unique: true, lowercase: true },
+    username: { type: String, lowercase: true, trim: true },
+    email: { type: String, lowercase: true, trim: true },
     passwordHash: { type: String, required: true },
-    name: { type: String, default: "Staff" },
+    name: { type: String, default: "" },
+    designation: { type: String, default: "" },
+    department: { type: String, default: "" },
+    phone: { type: String, default: "" },
     role: { type: String, enum: ["admin", "staff"], default: "staff" },
+    active: { type: Boolean, default: true },
+    // Set by a create / reset on the Users screen: they choose their own at the next sign-in.
+    mustChangePassword: { type: Boolean, default: false },
+    permissions: { type: mongoose.Schema.Types.Mixed, default: null },
     // Bumped on password change / "sign out everywhere" — older tokens stop working.
     tokenVersion: { type: Number, default: 0 },
     passwordChangedAt: { type: Date },
+    failedLogins: { type: Number, default: 0 },
+    lockedUntil: { type: Date, default: null },
+    lastLoginAt: { type: Date },
+    lastLoginIp: { type: String, default: "" },
+    loginCount: { type: Number, default: 0 },
+    createdBy: { type: String, default: "" },
+    updatedBy: { type: String, default: "" },
   },
-  { timestamps: true }
+  // Indexes are created by migrateUsers() — the old unique email index has to go first.
+  { timestamps: true, autoIndex: false }
 );
+userSchema.index({ username: 1 }, { unique: true, partialFilterExpression: { username: { $type: "string" } } });
+userSchema.index({ email: 1 }, { unique: true, partialFilterExpression: { email: { $type: "string" } } });
 
 export const Patient = mongoose.model("Patient", patientSchema);
 export const Report = mongoose.model("Report", reportSchema);

@@ -8,6 +8,8 @@ import { deliveryCheckState, watiWebhookKey } from "../services/delivery.js";
 import { getJobState } from "../jobs/scheduler.js";
 import { readWatiApiUsage } from "../services/watiCache.js";
 import { parseClock } from "../utils/schedule.js";
+import { settingsScreen, updateSettings } from "../services/appSettings.js";
+import { listUsers } from "../services/users.js";
 
 const router = express.Router();
 
@@ -75,9 +77,13 @@ router.get("/automation", async (_req, res) => {
 
 router.put("/automation", async (req, res) => {
   const settings = await getSettings();
+  const changed = [];
   try {
     for (const [key, check] of Object.entries(FIELDS)) {
-      if (req.body?.[key] !== undefined) settings[key] = check(req.body[key]);
+      if (req.body?.[key] === undefined) continue;
+      const value = check(req.body[key]);
+      if (JSON.stringify(value) !== JSON.stringify(settings[key])) changed.push(key);
+      settings[key] = value;
     }
   } catch (error) {
     if (error instanceof ValidationError) return res.status(400).json({ error: error.message });
@@ -89,7 +95,47 @@ router.put("/automation", async (req, res) => {
   settings.scope = "OP_ONLY";
   settings.updatedBy = req.user?.email || "staff";
   await settings.save();
+  res.locals.auditChanges = changed; // middleware/audit.js
   res.json({ settings });
+});
+
+/**
+ * Master Settings (super admin): portal switches, sign-in rules, audit,
+ * announcement (services/appSettings.js), with live numbers for context.
+ */
+// How many active staff accounts have each feature in their own access — who a global switch turns it off for.
+const FEATURE_HOLDERS = {
+  "features.labSearch": (p) => p.screens.search !== "none",
+  "features.labFinder": (p) => p.screens.labFinder !== "none",
+  "features.exports": (p) => ["labFinder", "monitor", "audit"].some((id) => p.screens[id] !== "none"),
+};
+async function settingsLive() {
+  const users = await listUsers().catch(() => []);
+  const staff = users.filter((u) => !u.isSuperAdmin && u.active !== false);
+  const automation = await getSettings().catch(() => null);
+  return {
+    staffCount: staff.length,
+    superAdmins: users.filter((u) => u.isSuperAdmin).length,
+    sendingOn: automation ? Boolean(automation.messageSendEnabled) : null,
+    featureHolders: Object.fromEntries(Object.entries(FEATURE_HOLDERS).map(([key, has]) => [key, staff.filter((u) => has(u.permissions)).length])),
+  };
+}
+
+router.get("/", async (_req, res) => {
+  res.json({ ok: true, ...(await settingsScreen()), live: await settingsLive() });
+});
+
+router.put("/", async (req, res) => {
+  const values = req.body?.values;
+  if (!values || typeof values !== "object" || Array.isArray(values)) {
+    return res.status(400).json({ ok: false, error: "Nothing to save" });
+  }
+  try {
+    const saved = await updateSettings(values, req.user?.username || req.user?.email || "");
+    res.json({ ok: true, ...saved, live: await settingsLive() });
+  } catch (error) {
+    res.status(error.status || 500).json({ ok: false, error: error.expose ? error.message : "Couldn't save the settings" });
+  }
 });
 
 /** Everything the Settings page shows about the server side: switches, jobs, WATI. */

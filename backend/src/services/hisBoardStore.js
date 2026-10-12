@@ -34,6 +34,9 @@ function hashOrder(order) {
     statusCounts: order.statusCounts || {},
     completedAt: order.completedAt?.toISOString?.() || order.completedAt || null,
     phone: order.phone || "",
+    // Approved results (Lab Finder) — so a board saved before results were kept picks them up.
+    results: (order.procedures || []).map((p) => p.result || "").join("|"),
+    patient: [order.age || "", order.gender || "", order.doctor || ""].join("|"),
   };
   return crypto.createHash("sha1").update(JSON.stringify(payload)).digest("hex");
 }
@@ -49,6 +52,9 @@ function toStoredDoc(labDay, order) {
     opIpType: order.opIpType || "UNKNOWN",
     opIpRaw: order.opIpRaw || "",
     patientType: order.patientType || "",
+    age: order.age || "",
+    gender: order.gender || "",
+    doctor: order.doctor || "",
     hisStatus: order.hisStatus || "",
     readiness: order.readiness || "WAITING",
     procedureTotal: order.procedureTotal || 0,
@@ -62,6 +68,9 @@ function toStoredDoc(labDay, order) {
       status: p.status || "",
       procId: p.procId || null,
       completedAt: p.completedAt || null,
+      result: p.result || "",
+      value: Number.isFinite(p.value) ? p.value : null,
+      unit: p.unit || "",
     })),
     statusCounts: order.statusCounts || {},
     requestDate: order.requestDate || null,
@@ -84,6 +93,9 @@ export function boardOrderFromDocument(doc) {
     opIpType: row.opIpType,
     opIpRaw: row.opIpRaw,
     patientType: row.patientType || "",
+    age: row.age || "",
+    gender: row.gender || "",
+    doctor: row.doctor || "",
     hisStatus: row.hisStatus,
     statusCounts: row.statusCounts || {},
     procedureTotal: row.procedureTotal,
@@ -97,6 +109,9 @@ export function boardOrderFromDocument(doc) {
       status: p.status,
       procId: p.procId,
       completedAt: p.completedAt,
+      result: p.result || "",
+      value: Number.isFinite(p.value) ? p.value : null,
+      unit: p.unit || "",
     })),
   };
 }

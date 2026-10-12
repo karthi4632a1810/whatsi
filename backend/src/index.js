@@ -7,7 +7,12 @@ import { connectDb } from "./db.js";
 import { ensureAutomationSettings } from "./models/index.js";
 import { ensureDefaultTemplate } from "./services/watiTemplates.js";
 import { authRequired } from "./middleware/auth.js";
+import { auditMiddleware } from "./middleware/audit.js";
 import authRoutes from "./routes/auth.js";
+import meRoutes from "./routes/me.js";
+import userRoutes from "./routes/users.js";
+import auditRoutes from "./routes/audit.js";
+import labResultRoutes from "./routes/labResults.js";
 import reportRoutes from "./routes/reports.js";
 import patientRoutes from "./routes/patients.js";
 import messageRoutes from "./routes/messages.js";
@@ -19,6 +24,8 @@ import publicRoutes from "./routes/public.js";
 import monitorRoutes from "./routes/monitor.js";
 import { recoverAfterRestart, startScheduler } from "./jobs/scheduler.js";
 import { migrateSettings } from "./services/reports.js";
+import { loadSettings, startSettingsRefresh } from "./services/appSettings.js";
+import { migrateUsers } from "./services/users.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -28,6 +35,8 @@ app.disable("x-powered-by");
 // list other origins in CORS_ORIGINS if the API must be called from elsewhere.
 app.use(cors({ origin: config.corsOrigins.length ? config.corsOrigins : false }));
 app.use(express.json({ limit: "1mb" }));
+// Audit log: records API actions as they finish — registered first so sign-in / sign-out are covered too.
+app.use(auditMiddleware);
 
 app.get("/api/health", (_req, res) => {
   res.json({ ok: true, service: "whatsi-api" });
@@ -38,7 +47,12 @@ app.use("/api/auth", authRoutes);
 app.use("/api/public", publicRoutes);
 app.use("/api/webhooks", webhookRoutes);
 
+// Everything below needs a signed-in account; each route's permission: services/accessControl.js.
 app.use("/api", authRequired);
+app.use("/api/me", meRoutes);
+app.use("/api/users", userRoutes);
+app.use("/api/audit", auditRoutes);
+app.use("/api/lab-results", labResultRoutes);
 app.use("/api/monitor", monitorRoutes);
 app.use("/api", opRoutes);
 app.use("/api", reportRoutes);
@@ -63,6 +77,9 @@ app.use((error, _req, res, _next) => {
 });
 
 await connectDb();
+await loadSettings();
+startSettingsRefresh();
+await migrateUsers();
 await ensureAutomationSettings();
 await migrateSettings();
 await ensureDefaultTemplate();
