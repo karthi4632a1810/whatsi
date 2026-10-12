@@ -100,3 +100,4 @@ cd backend
 npm test                  # scheduling rules (delay, night hold, retries, statuses)
 npm run test:integration  # full send pipeline against a fake WATI + throwaway database
 ```
+# whatsi
