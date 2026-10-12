@@ -28,21 +28,6 @@
   color: var(--text-main);
 }
 
-/* whatsi's old stylesheet styles every button / input / table globally; inside
-   the monitor those go back to browser defaults, as in the investigation portal. */
-.wa-page button,
-.wa-page input,
-.wa-page select,
-.wa-page table,
-.wa-page thead,
-.wa-page tbody,
-.wa-page tr,
-.wa-page th,
-.wa-page td {
-  all: revert;
-  box-sizing: border-box;
-}
-
 /* Buttons and messages the monitor borrows from the portal's base styles */
 .wa-page .btn {
   display: inline-flex;

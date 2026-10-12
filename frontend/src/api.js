@@ -18,6 +18,10 @@ export function clearToken() {
   }
 }
 
+/** App.jsx listens: the session ended (→ sign-in screen) or a temporary password must be replaced. */
+export const AUTH_EXPIRED_EVENT = "whatsi:auth-expired";
+export const MUST_CHANGE_PASSWORD_EVENT = "whatsi:must-change-password";
+
 async function request(path, options = {}) {
   const headers = {
     "Content-Type": "application/json",
@@ -29,12 +33,13 @@ async function request(path, options = {}) {
   const response = await fetch(path, { ...options, headers });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    if (response.status === 401) {
+    if (response.status === 401 && !path.startsWith("/api/auth/")) {
       clearToken();
-      if (!window.location.pathname.startsWith("/login")) {
-        window.location.assign("/login?reason=session-expired");
-      }
-      throw new Error("Session expired — please log in again");
+      window.dispatchEvent(new CustomEvent(AUTH_EXPIRED_EVENT, { detail: { reason: data.error } }));
+      throw new Error(data.error || "Session expired — please log in again");
+    }
+    if (response.status === 403 && data.code === "must_change_password") {
+      window.dispatchEvent(new CustomEvent(MUST_CHANGE_PASSWORD_EVENT));
     }
     if (response.status >= 500 && !data.error) {
       throw new Error("Backend unavailable — restart the API server and try Refresh again.");
@@ -54,18 +59,20 @@ function monitorParams(params = {}) {
   return q.toString();
 }
 
-/** Downloads a WhatsApp Monitor export; returns the file name. */
-export async function downloadMonitorExport(params, view, format) {
+/** Downloads a file from the API (with the login token); returns the file name. */
+async function downloadFile(path, { method = "GET", body, fallbackName = "download" } = {}) {
   const token = getToken();
-  const response = await fetch(`/api/monitor/export?${monitorParams({ ...params, view, format })}`, {
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  const response = await fetch(path, {
+    method,
+    headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(body ? { "Content-Type": "application/json" } : {}) },
+    body: body ? JSON.stringify(body) : undefined,
   });
   if (!response.ok) {
     const data = await response.json().catch(() => ({}));
-    throw new Error(data.error || `Export failed (${response.status})`);
+    throw new Error(data.error || `Download failed (${response.status})`);
   }
   const blob = await response.blob();
-  const name = /filename="([^"]+)"/.exec(response.headers.get("Content-Disposition") || "")?.[1] || `whatsapp-op.${format}`;
+  const name = /filename="([^"]+)"/.exec(response.headers.get("Content-Disposition") || "")?.[1] || fallbackName;
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
@@ -77,7 +84,38 @@ export async function downloadMonitorExport(params, view, format) {
   return name;
 }
 
+/** Downloads a WhatsApp Monitor export; returns the file name. */
+export const downloadMonitorExport = (params, view, format) =>
+  downloadFile(`/api/monitor/export?${monitorParams({ ...params, view, format })}`, { fallbackName: `whatsapp-op.${format}` });
+export const downloadAuditLog = (params) => downloadFile(`/api/audit/export?${monitorParams(params)}`, { fallbackName: "audit-log.csv" });
+export const downloadLabResults = (query) =>
+  downloadFile("/api/lab-results/export", { method: "POST", body: { query }, fallbackName: "lab-finder.csv" });
+
+const post = (path, body = {}) => request(path, { method: "POST", body: JSON.stringify(body) });
+const put = (path, body = {}) => request(path, { method: "PUT", body: JSON.stringify(body) });
+
 export const api = {
+  // Sign-in, the signed-in user, users (super admin), Master Settings, audit, Lab Finder
+  login: (username, password) => post("/api/auth/login", { username, password }),
+  logout: () => post("/api/auth/logout").catch(() => {}),
+  me: () => request("/api/me"),
+  changeMyPassword: (current, password) => post("/api/me/password", { current, password }),
+  users: () => request("/api/users"),
+  createUser: (body) => post("/api/users", body),
+  updateUser: (username, body) => put(`/api/users/${encodeURIComponent(username)}`, body),
+  resetUserPassword: (username, password, mustChange = true) => post(`/api/users/${encodeURIComponent(username)}/password`, { password, mustChange }),
+  signOutUser: (username) => post(`/api/users/${encodeURIComponent(username)}/sign-out`),
+  deleteUser: (username) => request(`/api/users/${encodeURIComponent(username)}`, { method: "DELETE" }),
+  masterSettings: () => request("/api/settings"),
+  saveMasterSettings: (values) => put("/api/settings", { values }),
+  auditSummary: (params) => request(`/api/audit/summary?${monitorParams(params)}`),
+  auditEvents: (params) => request(`/api/audit/events?${monitorParams(params)}`),
+  auditSessions: (params) => request(`/api/audit/sessions?${monitorParams(params)}`),
+  auditOptions: () => request("/api/audit/options"),
+  labTests: (q) => request(`/api/lab-results/tests?q=${encodeURIComponent(q || "")}`),
+  labCoverage: () => request("/api/lab-results/coverage"),
+  labSearch: (query) => post("/api/lab-results/search", query),
+
   // WhatsApp Monitor (OP lab reports)
   monitorSummary: (params) => request(`/api/monitor/summary?${monitorParams(params)}`),
   monitorInsights: (params) => request(`/api/monitor/insights?${monitorParams(params)}`),
@@ -89,11 +127,6 @@ export const api = {
   monitorRefresh: () => request("/api/monitor/refresh", { method: "POST", body: "{}" }),
   monitorRetry: (id) => request(`/api/monitor/messages/${encodeURIComponent(id)}/retry`, { method: "POST", body: "{}" }),
 
-  login: (email, password) =>
-    request("/api/auth/login", {
-      method: "POST",
-      body: JSON.stringify({ email, password }),
-    }),
   stats: (params = {}) => {
     const q = new URLSearchParams(params).toString();
     return request(`/api/stats${q ? `?${q}` : ""}`);

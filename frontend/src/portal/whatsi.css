@@ -1,0 +1,54 @@
+/* whatsi additions on top of the portal design (portal.css) — same tokens, same look. */
+
+/* Sub-screens of one menu item (OP Lab Reports → HIS board | WhatsApp queue, …) */
+.screen-tabs {
+  margin-bottom: var(--space-4);
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.screen-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.screen-tabs .tab-btn {
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.nav-segment-btn {
+  text-decoration: none;
+}
+
+.section-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.text-muted {
+  color: var(--text-muted);
+}
+
+/* Lab Finder: count on the left, download on the right; compact PDF button per row */
+.lf-results-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.lf-pdf-btn {
+  padding: 5px 10px;
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+
+@media (max-width: 680px) {
+  .page {
+    padding: var(--space-4) var(--space-4) 48px;
+  }
+}
