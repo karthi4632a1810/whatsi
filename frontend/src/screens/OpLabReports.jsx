@@ -1,6 +1,6 @@
 import { Route, Routes } from "react-router-dom";
-import HisLabTodayPage from "../pages/DashboardPage.jsx";
-import ReportsPage from "../pages/ReportsPage.jsx";
+import HisBoard from "./HisBoard.jsx";
+import WhatsappQueue from "./WhatsappQueue.jsx";
 import { TableViewIcon, WhatsAppIcon } from "../portal/Icons.jsx";
 import { ScreenTabs } from "./ScreenParts.jsx";
 
@@ -15,8 +15,8 @@ export default function OpLabReports({ access, refreshSeconds }) {
         ]}
       />
       <Routes>
-        <Route index element={<div className="legacy"><HisLabTodayPage canSend={access.reports.canSend} refreshSeconds={refreshSeconds} /></div>} />
-        <Route path="queue" element={<div className="legacy"><ReportsPage canSend={access.reports.canSend} /></div>} />
+        <Route index element={<HisBoard canSend={access.reports.canSend} refreshSeconds={refreshSeconds} />} />
+        <Route path="queue" element={<WhatsappQueue canSend={access.reports.canSend} />} />
       </Routes>
     </div>
   );

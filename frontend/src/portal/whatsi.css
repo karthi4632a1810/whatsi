@@ -52,3 +52,357 @@
     padding: var(--space-4) var(--space-4) 48px;
   }
 }
+
+/* ——— Status pills (HIS status, ready, queue, WhatsApp) ——— */
+.op-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 9px;
+  border-radius: var(--radius-full);
+  font-size: 11.5px;
+  font-weight: 700;
+  text-transform: capitalize;
+  white-space: nowrap;
+  border: 1px solid transparent;
+}
+.op-pill.is-ok { background: var(--green-bg); color: var(--green); border-color: var(--green-border); }
+.op-pill.is-wa { background: #dcfce7; color: #15803d; border-color: #bbf7d0; }
+.op-pill.is-info { background: var(--primary-subtle); color: var(--primary); border-color: var(--primary-border); }
+.op-pill.is-warn { background: var(--amber-bg); color: #b45309; border-color: var(--amber-border); }
+.op-pill.is-bad { background: var(--red-bg); color: var(--red); border-color: var(--red-border); }
+.op-pill.is-muted { background: var(--bg-subtle); color: var(--text-muted); border-color: var(--border-subtle); }
+
+/* ——— OP Lab Reports → HIS board ——— */
+.op-board-status .automation-meta-text {
+  min-width: 0;
+}
+.op-board-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.op-progress {
+  display: block;
+  width: min(320px, 60vw);
+  height: 6px;
+  margin-top: 6px;
+  background: var(--bg-subtle);
+  border-radius: var(--radius-full);
+  overflow: hidden;
+}
+.op-progress i {
+  display: block;
+  height: 100%;
+  background: var(--primary);
+  transition: width 0.3s ease;
+}
+.op-toolbar {
+  justify-content: flex-start;
+}
+.op-search-in {
+  height: 38px;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--text-main);
+  font: inherit;
+  font-size: 13px;
+}
+.op-filters-btn {
+  height: 38px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+}
+.op-filters-btn.active {
+  border-color: var(--primary);
+  color: var(--primary);
+  background: var(--primary-subtle);
+}
+.op-filters-btn .cat-count-badge {
+  background: var(--primary);
+  color: #fff;
+}
+.op-adv {
+  margin-bottom: var(--space-4);
+}
+.op-active-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+.op-active-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px 4px 12px;
+  border: 1px solid var(--primary-border);
+  border-radius: var(--radius-full);
+  background: var(--primary-subtle);
+  color: var(--primary);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.op-active-chip span {
+  font-size: 15px;
+  line-height: 1;
+}
+.op-active-chip:hover {
+  background: var(--red-bg);
+  border-color: var(--red-border);
+  color: var(--red);
+}
+.op-clear-all {
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 12.5px;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.op-clear-all:hover {
+  color: var(--text-main);
+}
+.op-warn {
+  margin-bottom: var(--space-4);
+  padding: 10px 14px;
+  border: 1px solid var(--amber-border);
+  border-radius: var(--radius-md);
+  background: var(--amber-bg);
+  color: #92400e;
+  font-size: 13.5px;
+}
+.op-board-table td {
+  vertical-align: middle;
+}
+.op-cell-patient .op-name {
+  display: block;
+  font-weight: 700;
+  color: var(--text-main);
+}
+.op-cell-patient small {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.op-cell-dept {
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.op-cell-tests {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.op-mini-bar {
+  display: block;
+  width: 56px;
+  height: 4px;
+  margin-top: 4px;
+  background: var(--bg-subtle);
+  border-radius: var(--radius-full);
+  overflow: hidden;
+}
+.op-mini-bar i {
+  display: block;
+  height: 100%;
+  background: var(--green);
+}
+.op-cell-time {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
+.tel-link.is-invalid {
+  color: var(--red);
+}
+.op-row-updated td {
+  animation: opRowFlash 4s ease;
+}
+@keyframes opRowFlash {
+  0%, 30% { background: #fef9c3; }
+  100% { background: transparent; }
+}
+.op-more {
+  display: block;
+  margin: 14px auto 0;
+}
+.portal-toast.is-error .toast-icon {
+  background: var(--red);
+}
+
+/* ——— PDF preview popup ——— */
+.op-pdf-modal {
+  width: min(1100px, 100%);
+  height: min(92vh, 1200px);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-surface);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-xl);
+  overflow: hidden;
+}
+.op-pdf-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.op-pdf-icon {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  flex: none;
+  border-radius: var(--radius-md);
+  background: var(--red-bg);
+  color: var(--red);
+}
+.op-pdf-title {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.op-pdf-title h3 {
+  margin: 0;
+  font-size: 15px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.op-pdf-title p {
+  margin: 2px 0 0;
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+.op-pdf-body {
+  position: relative;
+  flex: 1 1 auto;
+  overflow: auto;
+  background: var(--bg-subtle);
+}
+.op-pdf-frame {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: none;
+  background: #fff;
+}
+.op-pdf-error {
+  max-width: 720px;
+  margin: 24px auto;
+  padding: 0 16px;
+  display: grid;
+  gap: 12px;
+}
+.op-pdf-link label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.op-pdf-link-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.op-pdf-link-row input {
+  flex: 1 1 280px;
+  min-width: 0;
+  height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  font: inherit;
+}
+@media (max-width: 680px) {
+  .op-pdf-modal {
+    height: 96vh;
+  }
+  .op-pdf-head .btn {
+    display: none;
+  }
+}
+.op-board-table .tel-link {
+  white-space: nowrap;
+}
+
+/* ——— OP Lab Reports → WhatsApp queue ——— */
+.op-col-check {
+  width: 36px;
+  text-align: center;
+}
+.op-col-check input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--primary);
+}
+.op-cell-status {
+  min-width: 140px;
+}
+.op-cell-status .op-tick,
+.op-cell-status .op-note {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text-muted);
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.op-cell-status .op-tick {
+  color: var(--green);
+  font-weight: 600;
+}
+.op-send-btn {
+  padding: 6px 12px;
+  font-size: 12.5px;
+}
+.op-bulk-send {
+  margin-left: auto;
+}
+
+/* ——— Test send: pick a contact ——— */
+.op-send-modal {
+  width: min(460px, 100%);
+}
+.op-contact-list {
+  display: grid;
+  gap: 8px;
+  max-height: 50vh;
+  overflow: auto;
+}
+.op-contact {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+.op-contact.is-on {
+  border-color: var(--primary);
+  background: var(--primary-subtle);
+}
+.op-contact input {
+  accent-color: var(--primary);
+}
+.op-contact span {
+  display: grid;
+}
+.op-contact small {
+  color: var(--text-muted);
+  font-size: 12px;
+}

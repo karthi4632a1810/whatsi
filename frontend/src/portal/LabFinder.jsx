@@ -281,9 +281,7 @@ export default function LabFinder({ canDownload = true }) {
         </section>
       )}
 
-      <div className="legacy">
-        <PdfPreviewModal order={preview} onClose={() => setPreview(null)} />
-      </div>
+      <PdfPreviewModal order={preview} onClose={() => setPreview(null)} />
     </div>
   );
 }
