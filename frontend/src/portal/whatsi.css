@@ -551,3 +551,23 @@
     margin-left: 0;
   }
 }
+
+/* ——— WATI Settings → Delivery: three modes (the portal has two) ——— */
+.op-modes-3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+@media (max-width: 760px) {
+  .op-modes-3 {
+    grid-template-columns: 1fr;
+  }
+}
+.wati-mode-pill.is-off {
+  color: #475569;
+  background: #e2e8f0;
+}
+a.wati-mode-pill {
+  text-decoration: none;
+}
+.op-server-note {
+  margin-bottom: 14px;
+}

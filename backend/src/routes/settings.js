@@ -117,6 +117,7 @@ async function settingsLive() {
     staffCount: staff.length,
     superAdmins: users.filter((u) => u.isSuperAdmin).length,
     sendingOn: automation ? Boolean(automation.messageSendEnabled) : null,
+    deliveryMode: automation ? (automation.watiTestSendMode ? "test" : automation.messageSendEnabled ? "live" : "off") : null,
     featureHolders: Object.fromEntries(Object.entries(FEATURE_HOLDERS).map(([key, has]) => [key, staff.filter((u) => has(u.permissions)).length])),
   };
 }

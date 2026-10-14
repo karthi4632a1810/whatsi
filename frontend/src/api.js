@@ -216,6 +216,8 @@ export const api = {
       body: JSON.stringify(body),
     }),
   watiOverview: () => request("/api/wati/overview"),
+  watiDelivery: () => request("/api/wati/delivery"),
+  saveWatiDelivery: (body) => put("/api/wati/delivery", body),
   watiTemplates: () => request("/api/wati/templates"),
   watiSyncTemplates: () => request("/api/wati/templates/sync", { method: "POST" }),
   watiCreateTemplate: (body) =>

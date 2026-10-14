@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { api } from "../api.js";
-import { displayPhone, normalizePhone } from "../lib/phone.js";
 import { AlertIcon, CheckIcon, ClockIcon, CloseIcon, FilePdfIcon, RotateCcwIcon, SendIcon, ToggleIcon, WhatsAppIcon } from "../portal/Icons.jsx";
 import "../monitor/monitor.css";
 import { Loading, Pill } from "./ui.jsx";
@@ -81,54 +81,10 @@ function Section({ icon: Icon, title, intro, children }) {
   );
 }
 
-/** Test numbers for test send mode: add by hand, remove with ×. */
-function TestNumbers({ phones, onChange }) {
-  const [draft, setDraft] = useState("");
-  function add() {
-    const phone = normalizePhone(draft);
-    if (!phone) return;
-    if (!phones.includes(phone)) onChange([...phones, phone]);
-    setDraft("");
-  }
-  return (
-    <div className="op-test-numbers">
-      <div className="op-pdf-link-row">
-        <input
-          type="tel"
-          inputMode="numeric"
-          placeholder="10-digit mobile, e.g. 9384508490"
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              e.preventDefault();
-              add();
-            }
-          }}
-        />
-        <button type="button" className="btn btn-secondary" onClick={add}>
-          Add number
-        </button>
-      </div>
-      {phones.length ? (
-        <div className="op-active-filters">
-          {phones.map((p) => (
-            <button key={p} type="button" className="op-active-chip" onClick={() => onChange(phones.filter((x) => x !== p))} aria-label={`Remove ${displayPhone(p)}`}>
-              {displayPhone(p)} <span aria-hidden>×</span>
-            </button>
-          ))}
-        </div>
-      ) : (
-        <p className="wati-hint">No test numbers yet — test sends need at least one.</p>
-      )}
-    </div>
-  );
-}
 
 const SCHEDULE_KEYS = [
   "automationEnabled",
   "readinessRule",
-  "messageSendEnabled",
   "mode",
   "sendDelayHours",
   "endOfDayTime",
@@ -140,9 +96,9 @@ const SCHEDULE_KEYS = [
   "statusChecksEnabled",
   "statusChecksPerDay",
   "watiTemplateName",
-  "watiTestSendMode",
-  "watiTestContactPhones",
 ];
+// Off / Test / Live is on WATI Settings → Delivery (api.watiDelivery), not saved from here.
+const deliveryOf = (s) => (s?.watiTestSendMode ? "test" : s?.messageSendEnabled ? "live" : "off");
 const pick = (s) => Object.fromEntries(SCHEDULE_KEYS.map((k) => [k, s?.[k]]));
 
 /** Settings → Sending schedule (super admin): when OP reports go out on WhatsApp. */
@@ -150,6 +106,7 @@ export default function SendingSchedule() {
   const [saved, setSaved] = useState(null);
   const [draft, setDraft] = useState(null);
   const [health, setHealth] = useState(null);
+  const [delivery, setDelivery] = useState("off");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState("");
@@ -160,6 +117,7 @@ export default function SendingSchedule() {
       .then((d) => {
         setSaved(pick(d.settings));
         setDraft(pick(d.settings));
+        setDelivery(deliveryOf(d.settings));
       })
       .catch((e) => setError(e.message));
     api.health().then(setHealth).catch(() => {});
@@ -185,7 +143,7 @@ export default function SendingSchedule() {
   };
   const setRetry = (key) => (value) => setDraft((d) => ({ ...d, retryPolicy: { ...d.retryPolicy, [key]: value } }));
   const daily = draft.mode === "END_OF_DAY" || draft.mode === "CUSTOM_SCHEDULE";
-  const sendOff = !draft.messageSendEnabled;
+  const sendOff = delivery !== "live";
 
   async function save() {
     setSaving(true);
@@ -194,6 +152,7 @@ export default function SendingSchedule() {
       const data = await api.saveSettings(draft);
       setSaved(pick(data.settings));
       setDraft(pick(data.settings));
+      setDelivery(deliveryOf(data.settings));
       setToast("Saved — the sender uses the new schedule from its next run (within a minute).");
     } catch (e) {
       setError(e.message);
@@ -213,11 +172,12 @@ export default function SendingSchedule() {
     }
   }
 
-  const summary = sendOff
-    ? "Nothing goes to patients — reports still join the queue."
-    : draft.watiTestSendMode
-      ? "Test send mode — only manual sends to test numbers."
-      : daily
+  const summary =
+    delivery === "off"
+      ? "WhatsApp delivery is Off — nothing goes out; reports still join the queue. The schedule below applies once it's Live."
+      : delivery === "test"
+        ? "WhatsApp delivery is in Test — only manual sends, to your test numbers. The schedule below applies once it's Live."
+        : daily
         ? `Pending OP reports go out together once a day at ${draft.endOfDayTime || "18:00"} (India time).`
         : `Each OP report goes out ${draft.sendDelayHours ?? 3} h after its last result is approved${
             draft.quietHoursEnabled ? `, never between ${draft.quietStart} and ${draft.quietEnd} (held until ${draft.quietEnd})` : ""
@@ -231,15 +191,15 @@ export default function SendingSchedule() {
         </div>
         <div className="al-hero-text">
           <h2>Sending schedule</h2>
-          <p>When OP lab reports go to patients on WhatsApp, the night hold, retries and test sends.</p>
+          <p>When OP lab reports go out in Live mode: the delay after approval, the night hold and retries.</p>
         </div>
         <div className="al-hero-actions">
           <button
             type="button"
             className="al-hero-btn"
             onClick={sendAllPending}
-            disabled={sendOff || saved.watiTestSendMode || !saved.messageSendEnabled}
-            title={sendOff ? "Turn sending on first" : saved.watiTestSendMode ? "Not in test send mode" : "Send every pending report now"}
+           
+            title={sendOff ? "Only in Live mode (WATI Settings → Delivery)" : "Send every pending report now"}
           >
             <SendIcon size={15} /> Send all pending now
           </button>
@@ -249,6 +209,9 @@ export default function SendingSchedule() {
       <div className={`ms-callout ${sendOff ? "is-warn" : "is-live"}`}>
         {sendOff ? <AlertIcon size={15} /> : <WhatsAppIcon size={15} />}
         <span>{summary}</span>
+        <Link className="ms-link" to="/wati">
+          Off / Test / Live
+        </Link>
       </div>
 
       {toast && (
@@ -279,22 +242,13 @@ export default function SendingSchedule() {
           </div>
         </Section>
 
-        <Section icon={WhatsAppIcon} title="Sending to patients" intro="The master switch for WhatsApp to patients' phones.">
+        <Section icon={WhatsAppIcon} title="When reports go out" intro="In Live mode. Turning WhatsApp Off / Test / Live is on WATI Settings → Delivery.">
           <div className="ms-rows">
-            <Row label="Send to patients" help="Off: nothing reaches a patient — scheduled, bulk and queue sends are all blocked. Queue sync still works.">
-              <Bool value={draft.messageSendEnabled} onChange={set("messageSendEnabled")} label="Send to patients" />
-            </Row>
-            {draft.messageSendEnabled && health && !health.watiSendEnabled && (
-              <div className="ms-callout is-warn">
-                <AlertIcon size={15} /> The server also needs <code>WATI_SEND_ENABLED=true</code> in <code>.env</code> before messages can leave.
-              </div>
-            )}
-            <Row label="When" help={daily ? "Everything pending goes out together at one time." : "Each report on its own, a set time after approval."} off={sendOff}>
+            <Row label="When" help={daily ? "Everything pending goes out together at one time." : "Each report on its own, a set time after approval."}>
               <Seg
                 label="Send mode"
                 value={daily ? "END_OF_DAY" : "AFTER_READY"}
                 onChange={set("mode")}
-                disabled={sendOff}
                 options={[
                   { value: "AFTER_READY", label: "After approval" },
                   { value: "END_OF_DAY", label: "Once a day" },
@@ -302,28 +256,28 @@ export default function SendingSchedule() {
               />
             </Row>
             {daily ? (
-              <Row label="Daily send time" help="India time." off={sendOff}>
-                <input type="time" className="op-time" value={draft.endOfDayTime || "18:00"} disabled={sendOff} onChange={(e) => set("endOfDayTime")(e.target.value)} />
+              <Row label="Daily send time" help="India time.">
+                <input type="time" className="op-time" value={draft.endOfDayTime || "18:00"} onChange={(e) => set("endOfDayTime")(e.target.value)} />
               </Row>
             ) : (
-              <Row label="Send after approval" help="The wait gives the lab time to correct a result before the patient sees it." off={sendOff}>
-                <Num label="Hours after approval" value={draft.sendDelayHours ?? 3} onChange={set("sendDelayHours")} min={0} max={48} step={0.5} unit="hours" disabled={sendOff} />
+              <Row label="Send after approval" help="The wait gives the lab time to correct a result before the patient sees it.">
+                <Num label="Hours after approval" value={draft.sendDelayHours ?? 3} onChange={set("sendDelayHours")} min={0} max={48} step={0.5} unit="hours" />
               </Row>
             )}
-            <Row label="Night hold" help="No WhatsApp at night; anything due then goes out when the hold ends." off={sendOff}>
-              <Bool value={draft.quietHoursEnabled} onChange={set("quietHoursEnabled")} label="Night hold" disabled={sendOff} />
+            <Row label="Night hold" help="No WhatsApp at night; anything due then goes out when the hold ends.">
+              <Bool value={draft.quietHoursEnabled} onChange={set("quietHoursEnabled")} label="Night hold" />
             </Row>
             {draft.quietHoursEnabled && (
-              <Row label="No sends between" help="India time." off={sendOff}>
+              <Row label="No sends between" help="India time.">
                 <div className="op-time-range">
-                  <input type="time" className="op-time" value={draft.quietStart || "21:00"} disabled={sendOff} onChange={(e) => set("quietStart")(e.target.value)} />
+                  <input type="time" className="op-time" value={draft.quietStart || "21:00"} onChange={(e) => set("quietStart")(e.target.value)} />
                   <span>and</span>
-                  <input type="time" className="op-time" value={draft.quietEnd || "07:00"} disabled={sendOff} onChange={(e) => set("quietEnd")(e.target.value)} />
+                  <input type="time" className="op-time" value={draft.quietEnd || "07:00"} onChange={(e) => set("quietEnd")(e.target.value)} />
                 </div>
               </Row>
             )}
-            <Row label="Don't send automatically if approved more than" help="Old reports wait for staff to send them by hand from the queue." off={sendOff}>
-              <Num label="Automatic send age limit" value={draft.maxAutoSendAgeHours ?? 24} onChange={set("maxAutoSendAgeHours")} min={1} max={168} unit="hours ago" disabled={sendOff} />
+            <Row label="Don't send automatically if approved more than" help="Old reports wait for staff to send them by hand from the queue.">
+              <Num label="Automatic send age limit" value={draft.maxAutoSendAgeHours ?? 24} onChange={set("maxAutoSendAgeHours")} min={1} max={168} unit="hours ago" />
             </Row>
           </div>
         </Section>
@@ -345,19 +299,11 @@ export default function SendingSchedule() {
           </div>
         </Section>
 
-        <Section icon={FilePdfIcon} title="Template & test sends" intro="The approved WATI template, and a safe way to try a send.">
+        <Section icon={FilePdfIcon} title="WATI template" intro="The approved template every OP lab report is sent with.">
           <div className="ms-rows">
             <Row label="WATI template name" help="Exactly as approved in WATI (a–z, 0–9 and _).">
               <input className="op-text" value={draft.watiTemplateName || ""} onChange={(e) => set("watiTemplateName")(e.target.value)} placeholder="mapims_lab_rpt" />
             </Row>
-            <Row label="Test send mode" help="Sends go to one test number you pick — never to the patient. Automatic sending is off while this is on.">
-              <Bool value={draft.watiTestSendMode} onChange={set("watiTestSendMode")} label="Test send mode" />
-            </Row>
-            {draft.watiTestSendMode && (
-              <Row label="Test numbers" wide>
-                <TestNumbers phones={draft.watiTestContactPhones || []} onChange={set("watiTestContactPhones")} />
-              </Row>
-            )}
           </div>
         </Section>
 

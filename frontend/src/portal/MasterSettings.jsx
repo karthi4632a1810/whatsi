@@ -526,12 +526,12 @@ export default function MasterSettings({ onNavigate, onSaved }) {
   const glance = [
     {
       id: 'sending',
-      nav: 'sending',
+      nav: 'wati',
       icon: WhatsAppIcon,
-      title: 'WhatsApp sending',
-      value: live.sendingOn === null || live.sendingOn === undefined ? '—' : live.sendingOn ? 'On' : 'Off',
-      sub: saved['maintenance.readOnly'] ? 'Paused by read-only mode' : 'Schedule on the Sending tab',
-      tone: live.sendingOn && !saved['maintenance.readOnly'] ? 'ok' : 'warn',
+      title: 'WhatsApp delivery',
+      value: { live: 'Live', test: 'Test — test number only', off: 'Off' }[live.deliveryMode] || '—',
+      sub: saved['maintenance.readOnly'] ? 'Paused by read-only mode' : 'Change it in WATI Settings → Delivery',
+      tone: live.deliveryMode === 'live' && !saved['maintenance.readOnly'] ? 'ok' : 'warn',
     },
     {
       id: 'users',

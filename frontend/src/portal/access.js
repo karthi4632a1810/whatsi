@@ -33,6 +33,7 @@ export function firstOpenView(me) {
 export function accessFor(me) {
   const p = perms(me);
   return {
+    isSuperAdmin: Boolean(me?.isSuperAdmin),
     reports: { canSend: canWrite(me, "reports") },
     wati: { canEdit: canWrite(me, "wati") },
     monitor: { canAct: canWrite(me, "monitor") },

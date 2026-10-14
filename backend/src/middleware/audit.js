@@ -65,6 +65,8 @@ const RULES = [
   ["PUT", re(`/api/wati/templates/${ID}`), "template_change", ({ req, ok }) => (ok ? { screen: "wati", details: { how: "Changed", name: short(req.body?.name, 60) } } : null)],
   ["DELETE", re(`/api/wati/templates/${ID}`), "template_change", ({ ok }) => (ok ? { screen: "wati", details: { how: "Deleted" } } : null)],
 
+  ["PUT", re("/api/wati/delivery"), "settings_change", ({ res, ok }) =>
+    ok && res.locals.auditChanges?.length ? { screen: "wati", details: { where: "WhatsApp delivery", changes: short(res.locals.auditChanges.join(", "), 500) } } : null],
   ["PUT", re("/api/settings/automation"), "settings_change", ({ res, ok }) =>
     ok && res.locals.auditChanges?.length ? { screen: "settings", details: { where: "the sending schedule", changes: short(res.locals.auditChanges.join(", "), 500) } } : null],
   ["PUT", re("/api/settings"), "settings_change", ({ body, ok }) =>

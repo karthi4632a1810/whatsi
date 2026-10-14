@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { api } from "../api.js";
 import { cacheStatusLabel } from "../lib/watiCache.js";
 import { displayPhone } from "../lib/phone.js";
@@ -12,6 +13,7 @@ export default function WatiOverview() {
   const [data, setData] = useState(null);
   const [contacts, setContacts] = useState({ list: [], meta: null, loading: true });
   const [error, setError] = useState("");
+  const [delivery, setDelivery] = useState(null);
 
   useEffect(() => {
     api
@@ -22,11 +24,13 @@ export default function WatiOverview() {
       .watiContacts()
       .then((d) => setContacts({ list: d.contacts || [], meta: d, loading: false }))
       .catch(() => setContacts({ list: [], meta: null, loading: false }));
+    api.watiDelivery().then(setDelivery).catch(() => {});
   }, []);
 
   if (!data && !error) return <Loading>Loading the WATI overview…</Loading>;
 
-  const sendOn = Boolean(data?.config?.sendEnabled);
+  const mode = delivery?.mode;
+  const sendOn = mode === "live";
   const usage = data?.apiUsage;
 
   return (
@@ -39,10 +43,10 @@ export default function WatiOverview() {
           <h2>WhatsApp delivery</h2>
           <p>OP lab reports go to patients on WhatsApp through WATI, with the approved template. Failed reports stay queued for retry.</p>
         </div>
-        <span className={`wati-mode-pill ${sendOn ? "is-live" : "is-test"}`}>
+        <Link to="/wati" className={`wati-mode-pill ${mode === "live" ? "is-live" : mode === "test" ? "is-test" : "is-off"}`} title="Change on the Delivery tab">
           <span className="wati-mode-dot" />
-          {sendOn ? "Live — sending to patients" : "Sending off (safe)"}
-        </span>
+          {mode === "live" ? "Live — sending to patients" : mode === "test" ? "Test — only your test number" : "Off — nothing is sent"}
+        </Link>
       </header>
 
       {error && (
@@ -87,7 +91,7 @@ export default function WatiOverview() {
             <div className="op-pill-row">
               <Pill tone={data?.connection?.ok ? "ok" : "bad"}>WATI {data?.connection?.ok ? "configured" : "not configured"}</Pill>
               {data?.connection?.error ? <Pill tone="bad" title={data.connection.error}>{data.connection.error}</Pill> : null}
-              <Pill tone={sendOn ? "wa" : "muted"}>Send {sendOn ? "enabled" : "disabled"}</Pill>
+              <Pill tone={sendOn ? "wa" : "muted"}>Delivery {mode || "—"}</Pill>
               {data?.today?.successRate != null ? <Pill tone="ok">Today {data.today.successRate}% delivered to WATI</Pill> : null}
             </div>
           </section>
@@ -155,7 +159,7 @@ export default function WatiOverview() {
               <div>
                 <h3>Test contacts</h3>
                 <p>
-                  Used in test send mode; add them in Settings → Sending schedule.
+                  Used in test mode; add them on the Delivery tab.
                   {cacheStatusLabel(contacts.meta) ? ` ${cacheStatusLabel(contacts.meta)}.` : ""}
                 </p>
               </div>

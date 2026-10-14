@@ -25,7 +25,7 @@ export const SCREENS = [
   { id: "reports", label: "OP Lab Reports", write: "Refresh from HIS, sync the queue, and send, retry or cancel reports on WhatsApp" },
   { id: "search", label: "Lab Search", write: null },
   { id: "labFinder", label: "Lab Finder", write: null },
-  { id: "wati", label: "WATI Settings", write: "Edit message templates and patient contacts" },
+  { id: "wati", label: "WATI Settings", write: "Switch WhatsApp Off / Test / Live, set the test numbers, edit templates and contacts" },
   { id: "monitor", label: "WhatsApp Monitor", write: "Retry failed messages and ask WATI for the latest ticks" },
   { id: "audit", label: "Audit Log", write: null, note: "Everyone's sign-ins, screens and actions" },
 ];
