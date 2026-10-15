@@ -2151,3 +2151,10 @@
     transform: rotate(360deg);
   }
 }
+
+/* Result of "Check status now" in the message drawer */
+.wa-page .wa-check-note {
+  margin: 10px 0 0;
+  font-size: 12.5px;
+  color: var(--text-muted);
+}

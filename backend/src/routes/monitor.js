@@ -1,6 +1,7 @@
 import express from "express";
 import {
   monitorActivity,
+  monitorCheckMessage,
   monitorExport,
   monitorInsights,
   monitorMessage,
@@ -31,6 +32,7 @@ router.get("/patients", wrap(async (req, res) => res.json(await monitorPatients(
 router.get("/activity", wrap(async (req, res) => res.json({ events: await monitorActivity(Number(req.query.limit) || 20) })));
 router.get("/wati", wrap(async (_req, res) => res.json(await monitorWati())));
 router.post("/refresh", wrap(async (_req, res) => res.json(await monitorRefresh())));
+router.post("/messages/:id/check", wrap(async (req, res) => res.json(await monitorCheckMessage(String(req.params.id)))));
 
 router.get(
   "/messages/:id",

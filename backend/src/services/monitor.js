@@ -12,7 +12,7 @@ import { HisLabOrder, MessageLog, Report } from "../models/index.js";
 import { config } from "../config.js";
 import { DELIVERY_OP_IP_TYPE } from "./emr.js";
 import { getSettings, sendReportById } from "./reports.js";
-import { checksUsedToday, deliveryCheckState, runDeliveryChecks, watiWebhookKey } from "./delivery.js";
+import { checkMessageNow, checksUsedToday, deliveryCheckState, runDeliveryChecks, watiWebhookKey } from "./delivery.js";
 import { readWatiApiUsage } from "./watiCache.js";
 import { addIstDays, enumerateDays, reportDayKey } from "../utils/dates.js";
 import { classifyFailure, isTooOldForAutoSend, plannedSendAt } from "../utils/schedule.js";
@@ -689,6 +689,15 @@ export async function monitorWati() {
       : { mode: "emr", https: false, baseUrl: "", days: null },
     webhookPath: `/api/webhooks/wati/${watiWebhookKey()}`,
   };
+}
+
+/** "Check status now" for one message (drawer). Queue items without a send have nothing to check. */
+export async function monitorCheckMessage(id) {
+  if (!/^[a-f0-9]{24}$/i.test(id)) {
+    throw Object.assign(new Error("This report hasn't been sent yet — nothing to check"), { status: 400 });
+  }
+  const result = await checkMessageNow(id);
+  return { result, message: await monitorMessage(id) };
 }
 
 export async function monitorRefresh() {

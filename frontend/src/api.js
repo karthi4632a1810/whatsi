@@ -126,6 +126,7 @@ export const api = {
   monitorWati: () => request("/api/monitor/wati"),
   monitorRefresh: () => request("/api/monitor/refresh", { method: "POST", body: "{}" }),
   monitorRetry: (id) => request(`/api/monitor/messages/${encodeURIComponent(id)}/retry`, { method: "POST", body: "{}" }),
+  monitorCheckMessage: (id) => request(`/api/monitor/messages/${encodeURIComponent(id)}/check`, { method: "POST", body: "{}" }),
 
   stats: (params = {}) => {
     const q = new URLSearchParams(params).toString();

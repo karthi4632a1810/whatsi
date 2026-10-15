@@ -1,6 +1,8 @@
 /**
  * WhatsApp ticks for sent reports: Sent → Delivered → Read (or Failed).
  *
+ * Test sends are checked too, so a test to your own number shows its ticks.
+ *
  * Statuses arrive two ways (same approach as the investigation-chart portal):
  *  - WATI webhook (POST /api/webhooks/wati/<key>) — instant and free; doesn't
  *    use the WATI API quota. Preferred.
@@ -257,7 +259,6 @@ export async function runDeliveryChecks({ now = new Date() } = {}) {
   try {
     const logs = await MessageLog.find({
       status: { $in: ["SENT", "DELIVERED"] },
-      testSend: { $ne: true },
       sentAt: { $gte: new Date(now.getTime() - CHECK_WINDOW_MS) },
       $or: [{ nextCheckAt: { $lte: now } }, { nextCheckAt: null, statusChecks: 0 }],
     })
@@ -321,4 +322,36 @@ export async function runDeliveryChecks({ now = new Date() } = {}) {
   }
   lastRun = { at: now, numbers, updated, skipped: "", error };
   return lastRun;
+}
+
+/**
+ * "Check status now" in the Monitor drawer: asks WATI about this one message —
+ * test sends and ones older than the automatic window too. One WATI call,
+ * counted in today's status checks (a person asking is never refused).
+ */
+export async function checkMessageNow(logId) {
+  const fail = (message, status = 400) => Object.assign(new Error(message), { status });
+  if (!config.wati.token || !config.wati.baseUrl) throw fail("WATI isn't configured on the server");
+  const log = await MessageLog.findById(logId);
+  if (!log) throw fail("Message not found", 404);
+  if (!log.phone) throw fail("This message has no WhatsApp number");
+  if (log.status === "READ") return { found: true, status: "READ", changed: false, note: "Already read" };
+
+  const items = await fetchWatiMessages(log.phone, 100);
+  await countCheck();
+  const claimed = new Set(
+    (await MessageLog.distinct("watiMessageId", { phone: log.phone, _id: { $ne: log._id }, watiMessageId: { $nin: ["", null] } })) || []
+  );
+  await MessageLog.updateOne({ _id: log._id }, { $set: { lastCheckedAt: new Date() }, $inc: { statusChecks: 1 } });
+  const item = matchItem(log, items, claimed);
+  if (!item) return { found: false, status: log.status, changed: false, note: "WATI has no record of this message for that number" };
+  const status = statusFromWatiString(item.statusString);
+  const changed = status
+    ? await applyStatus(await MessageLog.findById(log._id), status, {
+        source: "status-check",
+        detail: item.failedDetail ? String(item.failedDetail).slice(0, 500) : "",
+        watiMessageId: item.id,
+      })
+    : false;
+  return { found: true, status: status || log.status, watiStatus: item.statusString || "", changed };
 }

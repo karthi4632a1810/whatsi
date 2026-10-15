@@ -16,6 +16,7 @@ const fetchWhatsappMessages = (params) => api.monitorMessages(params);
 const fetchWhatsappSummary = (params) => api.monitorSummary(params);
 const fetchWhatsappPatients = (params) => api.monitorPatients(params);
 const refreshWhatsappStatuses = () => api.monitorRefresh();
+const checkWhatsappMessage = (id) => api.monitorCheckMessage(id);
 const retryWhatsappMessage = (id) => api.monitorRetry(id);
 const downloadWhatsappExport = downloadMonitorExport;
 const track = () => {};
@@ -260,6 +261,7 @@ function MessageDrawer({ id, onClose, onChanged, readOnly = false }) {
   }, [message]);
   const [error, setError] = useState('');
   const [checking, setChecking] = useState(false);
+  const [checkNote, setCheckNote] = useState('');
   const [retrying, setRetrying] = useState(false);
 
   async function retryNow() {
@@ -294,11 +296,22 @@ function MessageDrawer({ id, onClose, onChanged, readOnly = false }) {
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
+  // Asks WATI about this one message (test sends and older ones too).
   async function checkNow() {
     setChecking(true);
+    setError('');
+    setCheckNote('');
     try {
-      await refreshWhatsappStatuses();
-      load();
+      const res = await checkWhatsappMessage(id);
+      if (res.message) setMessage(res.message);
+      const r = res.result || {};
+      setCheckNote(
+        !r.found
+          ? r.note || 'WATI has no record of this message yet.'
+          : r.changed
+            ? `Updated from WATI: ${String(r.status).toLowerCase()}.`
+            : `WATI still says ${String(r.watiStatus || r.status || 'sent').toLowerCase()} — the phone hasn't ${r.status === 'DELIVERED' ? 'opened it' : 'received it'} yet.`,
+      );
       onChanged?.();
     } catch (err) {
       setError(err.message);
@@ -375,6 +388,7 @@ function MessageDrawer({ id, onClose, onChanged, readOnly = false }) {
               <RefreshIcon size={15} spinning={checking} /> {checking ? 'Checking WATI…' : 'Check status now'}
             </button>
             )}
+            {checkNote && <p className="wa-check-note" role="status">{checkNote}</p>}
           </div>
         )}
       </aside>
