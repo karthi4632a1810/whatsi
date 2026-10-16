@@ -28,6 +28,7 @@ import {
   SendIcon,
 } from "../portal/Icons.jsx";
 import { CopyableChip, Empty, HisStatusPill, Loading, ReadyPill, Toast, WaPill, fmtTime, prettyPhone, useToast } from "./ui.jsx";
+import { SendWhatsAppButton } from "./SendWhatsApp.jsx";
 
 /** Status chips above the table; `value` is the hisFilters.js filter id. */
 const STATUS_FILTERS = [
@@ -226,7 +227,7 @@ function ActiveFilters({ chips, onClearAll }) {
   );
 }
 
-function BoardTable({ orders, changedIds, onPreview, onToast }) {
+function BoardTable({ orders, changedIds, onPreview, onToast, canSend, delivery, canChangeMode, onSent }) {
   return (
     <div className="table-wrap modern-table-wrap">
       <table className="results modern-results-table op-board-table">
@@ -296,10 +297,13 @@ function BoardTable({ orders, changedIds, onPreview, onToast }) {
                 <td className="op-cell-time">{fmtTime(o.completedAt)}</td>
                 <td className="cell-action">
                   {o.canPreview ? (
-                    <button type="button" className="btn btn-view-pdf" onClick={() => onPreview(o)} title={`Open the lab report of ${formatPatientName(o.patientName)}`}>
-                      <FilePdfIcon size={15} />
-                      <span>Lab Report</span>
-                    </button>
+                    <div className="action-btn-group">
+                      <button type="button" className="btn btn-view-pdf" onClick={() => onPreview(o)} title={`Open the lab report of ${formatPatientName(o.patientName)}`}>
+                        <FilePdfIcon size={15} />
+                        <span>PDF</span>
+                      </button>
+                      {canSend && <SendWhatsAppButton order={o} delivery={delivery} canChangeMode={canChangeMode} onSent={onSent} />}
+                    </div>
                   ) : (
                     <span className="text-muted">—</span>
                   )}
@@ -314,8 +318,9 @@ function BoardTable({ orders, changedIds, onPreview, onToast }) {
 }
 
 /** OP Lab Reports → HIS board: every OP lab order of a day from HIS, with readiness and WhatsApp state. */
-export default function HisBoard({ canSend = false, refreshSeconds = 15 }) {
+export default function HisBoard({ canSend = false, canChangeMode = false, refreshSeconds = 15 }) {
   const [stats, setStats] = useState(null);
+  const [delivery, setDelivery] = useState(null);
   const [allOrders, setAllOrders] = useState([]);
   const [filter, setFilter] = useState("all");
   const [search, setSearch] = useState("");
@@ -472,6 +477,15 @@ export default function HisBoard({ canSend = false, refreshSeconds = 15 }) {
   useEffect(() => {
     api.stats().then(setStats).catch(() => {});
   }, []);
+
+  // Off / Test / Live for the WhatsApp buttons (WATI Settings → Delivery); re-read now and then.
+  useEffect(() => {
+    if (!canSend) return undefined;
+    const read = () => api.watiDelivery().then(setDelivery).catch(() => {});
+    read();
+    const id = setInterval(() => !document.hidden && read(), 60_000);
+    return () => clearInterval(id);
+  }, [canSend]);
 
   // "/" jumps to the search box, as in the portal.
   useEffect(() => {
@@ -630,7 +644,19 @@ export default function HisBoard({ canSend = false, refreshSeconds = 15 }) {
             />
           ) : (
             <>
-              <BoardTable orders={shownOrders} changedIds={changedIds} onPreview={setPreviewOrder} onToast={showToast} />
+              <BoardTable
+                orders={shownOrders}
+                changedIds={changedIds}
+                onPreview={setPreviewOrder}
+                onToast={showToast}
+                canSend={canSend}
+                delivery={delivery}
+                canChangeMode={canChangeMode}
+                onSent={(message) => {
+                  showToast(message);
+                  loadFromServer({ quiet: true });
+                }}
+              />
               {shownOrders.length < filteredOrders.length && (
                 <button type="button" className="btn btn-secondary op-more" onClick={() => setPageSize("all")}>
                   Show all {filteredOrders.length} orders

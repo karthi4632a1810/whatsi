@@ -41,6 +41,8 @@ export const ACTIONS = {
   his_refresh: { cat: "report" },
   queue_sync: { cat: "report" },
   report_queue: { cat: "whatsapp" },
+  whatsapp_click: { cat: "whatsapp", client: true },
+  whatsapp_popup_cancel: { cat: "whatsapp", client: true },
   whatsapp_send: { cat: "whatsapp" },
   whatsapp_retry: { cat: "whatsapp" },
   whatsapp_check: { cat: "whatsapp" },
@@ -184,9 +186,13 @@ export function describe(e) {
       return `Synced ready reports to the WhatsApp queue${d.date ? ` for ${dmy(d.date)}` : ""}`;
     case "report_queue":
       return d.ok ? `Queued the report of ${patient(t)} for WhatsApp` : `Couldn't queue ${patient(t)}: ${d.error || "error"}`;
+    case "whatsapp_click":
+      return `Clicked WhatsApp for ${patient(t)}${d.mode ? ` (${d.mode} mode)` : ""}`;
+    case "whatsapp_popup_cancel":
+      return `Cancelled the WhatsApp popup for ${patient(t)}${d.numberEdited ? " (after changing the number)" : ""}`;
     case "whatsapp_send":
       return d.ok
-        ? `Sent ${d.count > 1 ? `${d.count} reports` : `the report of ${patient(t)}`} on WhatsApp${d.to ? ` to ${d.to}` : ""}`
+        ? `${d.test ? "Test-sent" : "Sent"} ${d.count > 1 ? `${d.count} reports` : `the report of ${patient(t)}`} on WhatsApp${d.to ? ` to ${d.to}` : ""}${d.numberEdited ? " (number typed by hand)" : ""}`
         : `WhatsApp send failed${t.orderId || t.patientName ? ` for ${patient(t)}` : ""}: ${d.error || "error"}`;
     case "whatsapp_retry":
       return d.ok ? `Retried a failed WhatsApp message${t.orderId || t.patientName ? ` of ${patient(t)}` : ""}` : `Retry failed: ${d.error || "error"}`;

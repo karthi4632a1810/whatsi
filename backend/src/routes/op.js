@@ -209,6 +209,7 @@ router.post(
       triggerType: "MANUAL",
       force: req.body?.force === true,
       testContactPhones: Array.isArray(req.body?.testContactPhones) ? req.body.testContactPhones : null,
+      toPhone: typeof req.body?.toPhone === "string" ? req.body.toPhone : null,
       sentBy: req.user?.email || "",
     });
     res.json({

@@ -549,7 +549,7 @@ const STALE_QUEUED_MS = 15 * 60 * 1000;
  */
 export async function sendReportById(
   reportId,
-  { triggerType = "MANUAL", force = false, testContactPhones = null, sentBy = "" } = {}
+  { triggerType = "MANUAL", force = false, testContactPhones = null, toPhone = null, sentBy = "" } = {}
 ) {
   const settings = await getSettings();
   const automatic = triggerType !== "MANUAL";
@@ -559,7 +559,7 @@ export async function sendReportById(
     throw new SendBlockedError("Test send mode: automatic sends are paused");
   }
   if (!settings.messageSendEnabled && !(useTestSend && !automatic)) {
-    throw new SendBlockedError("WhatsApp sending is switched off — turn it on in Settings");
+    throw new SendBlockedError("WhatsApp delivery is Off — switch it to Test or Live in WATI Settings → Delivery");
   }
   if (!config.wati.sendEnabled) {
     throw new SendBlockedError("Send blocked: set WATI_SEND_ENABLED=true in the server .env and restart the API");
@@ -598,7 +598,12 @@ export async function sendReportById(
     if (notAllowed) throw new SendBlockedError(`${notAllowed} is not in the test number list`);
     deliveryPhones = overridePhones;
   } else {
-    const phone = effectivePhone(report.patientRef, report.phone);
+    // A person sending by hand may give a different number for this one send (the HIS board popup).
+    const typed = !automatic && toPhone ? normalizePhone(toPhone) : "";
+    if (toPhone && !automatic && !/^\d{11,15}$/.test(typed)) {
+      throw new SendBlockedError("That number doesn't look like a mobile — use 10 digits or the full number with country code");
+    }
+    const phone = typed || effectivePhone(report.patientRef, report.phone);
     if (!phone) throw new SendBlockedError("Patient phone missing — add a number in Contacts", "NO_PHONE");
     if (!canSendToPhone(phone)) {
       throw new SendBlockedError(

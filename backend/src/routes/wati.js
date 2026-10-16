@@ -30,6 +30,7 @@ function deliveryView(s) {
     mode: modeOf(s),
     testPhones: s.watiTestContactPhones || [],
     templateName: s.watiTemplateName || config.wati.templateName,
+    readinessRule: s.readinessRule || "STRICT",
     schedule: {
       mode: s.mode,
       sendDelayHours: s.sendDelayHours,

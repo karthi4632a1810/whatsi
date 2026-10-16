@@ -218,6 +218,8 @@ export const api = {
     }),
   watiOverview: () => request("/api/wati/overview"),
   watiDelivery: () => request("/api/wati/delivery"),
+  sendOpOrder: (orderId, body) => post(`/api/op/orders/${encodeURIComponent(orderId)}/send`, body),
+  saveContactByUhid: (uhid, body) => put(`/api/patients/by-uhid/${encodeURIComponent(uhid)}`, body),
   saveWatiDelivery: (body) => put("/api/wati/delivery", body),
   watiTemplates: () => request("/api/wati/templates"),
   watiSyncTemplates: () => request("/api/wati/templates/sync", { method: "POST" }),

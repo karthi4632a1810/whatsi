@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api.js";
 import PageHeader from "../components/PageHeader.jsx";
@@ -8,6 +8,7 @@ import { formatEmrError } from "../lib/emrErrors.js";
 import { formatPatientName } from "../lib/format.js";
 import { CalendarIcon, CloseIcon, FilePdfIcon, PhoneIcon, PlusIcon, SearchIcon } from "../portal/Icons.jsx";
 import { CopyableChip, Empty, HisStatusPill, Loading, ReadyPill, Toast, WaPill, fmtDateTime, prettyPhone, useToast } from "./ui.jsx";
+import { SendWhatsAppButton } from "./SendWhatsApp.jsx";
 
 const STATUS_FILTERS = [
   { value: "ready", label: "Ready to send" },
@@ -27,7 +28,7 @@ const dmy = (iso) => String(iso || "").split("-").reverse().join("-");
  * Lab Search: OP lab orders across a date range — saved boards first, HIS for
  * days not loaded yet. One order can be added to the WhatsApp queue by hand.
  */
-export default function LabSearchScreen({ canQueue = false }) {
+export default function LabSearchScreen({ canQueue = false, canChangeMode = false }) {
   const [from, setFrom] = useState(dayValue(7));
   const [to, setTo] = useState(dayValue(0));
   const [filter, setFilter] = useState("ready");
@@ -40,6 +41,11 @@ export default function LabSearchScreen({ canQueue = false }) {
   const [queueingId, setQueueingId] = useState("");
   const [previewOrder, setPreviewOrder] = useState(null);
   const [toast, showToast, hideToast] = useToast();
+  const [delivery, setDelivery] = useState(null);
+
+  useEffect(() => {
+    if (canQueue) api.watiDelivery().then(setDelivery).catch(() => {});
+  }, [canQueue]);
 
   const shown = useMemo(() => filterHisOrders(orders, { filter: "all", query: search }), [orders, search]);
 
@@ -269,6 +275,17 @@ export default function LabSearchScreen({ canQueue = false }) {
                             <FilePdfIcon size={15} />
                             <span>PDF</span>
                           </button>
+                        )}
+                        {canQueue && o.canPreview && (
+                          <SendWhatsAppButton
+                            order={o}
+                            delivery={delivery}
+                            canChangeMode={canChangeMode}
+                            onSent={(message) => {
+                              showToast(message);
+                              setOrders((prev) => prev.map((row) => (row.orderId === o.orderId && row.reportDay === o.reportDay ? { ...row, synced: true, whatsappTone: "sent", whatsappLabel: "Sent" } : row)));
+                            }}
+                          />
                         )}
                         {canQueue && o.readiness !== "WAITING" && (
                           <button type="button" className="btn btn-secondary op-send-btn" disabled={!o.canQueue || queueingId === o.orderId} onClick={() => addToQueue(o)}>

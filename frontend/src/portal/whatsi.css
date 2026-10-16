@@ -571,3 +571,62 @@ a.wati-mode-pill {
 .op-server-note {
   margin-bottom: 14px;
 }
+
+/* ——— Send on WhatsApp popup (HIS board / Lab Search rows) ——— */
+.op-send-dialog {
+  width: min(460px, 100%);
+}
+.wa-send-mode.is-off {
+  color: #475569;
+  background: #e2e8f0;
+}
+.op-send-warn {
+  margin: 0;
+  font-size: 12.5px;
+}
+.op-save-number {
+  font-size: 12.5px;
+}
+.op-link {
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--primary);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+}
+.op-link:hover {
+  text-decoration: underline;
+}
+.btn-send-whatsapp.op-wa-off {
+  filter: grayscale(1);
+  opacity: 0.6;
+}
+.op-board-table .action-btn-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  justify-content: flex-end;
+}
+.op-board-table .cell-action,
+.op-queue-table .cell-action {
+  white-space: nowrap;
+}
+.op-board-table .action-btn-group {
+  flex-wrap: nowrap;
+}
+/* Room for the PDF + WhatsApp buttons without a horizontal scroll on a laptop */
+.op-board-table .op-cell-dept {
+  max-width: 150px;
+}
+.op-board-table .op-mini-bar {
+  width: 44px;
+}
+.op-board-table th,
+.op-board-table td {
+  padding-left: 12px;
+  padding-right: 12px;
+}

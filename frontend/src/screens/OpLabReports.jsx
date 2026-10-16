@@ -15,7 +15,7 @@ export default function OpLabReports({ access, refreshSeconds }) {
         ]}
       />
       <Routes>
-        <Route index element={<HisBoard canSend={access.reports.canSend} refreshSeconds={refreshSeconds} />} />
+        <Route index element={<HisBoard canSend={access.reports.canSend} canChangeMode={access.wati.canEdit} refreshSeconds={refreshSeconds} />} />
         <Route path="queue" element={<WhatsappQueue canSend={access.reports.canSend} />} />
       </Routes>
     </div>

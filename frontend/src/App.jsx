@@ -370,7 +370,7 @@ export default function App() {
         <Routes>
           <Route path="/" element={first ? <Navigate to={PATH_OF[first]} replace /> : null} />
           <Route path="/reports/*" element={<Guard me={me} view="reports"><OpLabReports access={access} refreshSeconds={refreshSeconds} /></Guard>} />
-          <Route path="/lab-search" element={<Guard me={me} view="search"><LabSearchScreen canQueue={access.reports.canSend} /></Guard>} />
+          <Route path="/lab-search" element={<Guard me={me} view="search"><LabSearchScreen canQueue={access.reports.canSend} canChangeMode={access.wati.canEdit} /></Guard>} />
           <Route path="/lab-finder" element={<Guard me={me} view="labFinder"><LabFinder canDownload={access.exports} /></Guard>} />
           <Route path="/wati/*" element={<Guard me={me} view="wati"><WatiSettings access={access} /></Guard>} />
           <Route path="/monitor/*" element={<Guard me={me} view="monitor"><MonitorScreen access={access} /></Guard>} />

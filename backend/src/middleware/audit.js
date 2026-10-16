@@ -41,7 +41,17 @@ const RULES = [
   ["POST", re("/api/op/refresh"), "his_refresh", ({ req, ok }) => (ok ? { screen: "reports", details: { date: short(req.body?.from || req.body?.date, 10) } } : null)],
   ["POST", re("/api/reports/poll"), "queue_sync", ({ req, ok }) => (ok ? { screen: "reports", details: { date: short(req.body?.from, 10) } } : null)],
   ["POST", re(`/api/op/orders/${ID}/queue`), "report_queue", ({ m, body, ok }) => ({ screen: "reports", target: { orderId: short(m[1], 30) }, details: { ok, error: errorOf(body, ok) } })],
-  ["POST", re(`/api/op/orders/${ID}/send`), "whatsapp_send", ({ m, body, ok }) => ({ screen: "reports", target: { orderId: short(m[1], 30) }, details: { ok, error: errorOf(body, ok) } })],
+  ["POST", re(`/api/op/orders/${ID}/send`), "whatsapp_send", ({ m, req, body, ok }) => ({
+    screen: "reports",
+    target: { orderId: short(m[1], 30) },
+    details: {
+      ok,
+      to: ok ? short((body.sentPhones || []).join(", "), 40) || undefined : undefined,
+      test: body.testSend === true || undefined,
+      numberEdited: Boolean(req.body?.toPhone) || undefined,
+      error: errorOf(body, ok),
+    },
+  })],
   ["POST", re(`/api/reports/${ID}/send`), "whatsapp_send", ({ m, body, ok }) => ({ screen: "reports", target: { reportRef: short(m[1], 30) }, details: { ok, error: errorOf(body, ok) } })],
   ["POST", re("/api/reports/bulk-send"), "whatsapp_send", ({ req, body, ok }) => ({
     screen: "reports",
