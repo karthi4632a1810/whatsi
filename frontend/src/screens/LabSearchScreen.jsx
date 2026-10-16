@@ -318,7 +318,7 @@ export default function LabSearchScreen({ canQueue = false, canChangeMode = fals
         </Empty>
       )}
 
-      <PdfPreviewModal order={previewOrder} onClose={() => setPreviewOrder(null)} />
+      <PdfPreviewModal order={previewOrder} onClose={() => setPreviewOrder(null)} canRefresh={canQueue} />
     </div>
   );
 }

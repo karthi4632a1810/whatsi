@@ -4,13 +4,44 @@ import { api } from "../api.js";
 import { formatPatientName } from "../lib/format.js";
 import { displayPhone } from "../lib/phone.js";
 import { track } from "../portal/audit.js";
-import { ClockIcon, CloseIcon, InfoIcon, RefreshIcon, WhatsAppIcon } from "../portal/Icons.jsx";
+import { ClockIcon, CloseIcon, FilePdfIcon, InfoIcon, RefreshIcon, WhatsAppIcon } from "../portal/Icons.jsx";
 import { Ticks, TickSteps } from "./Ticks.jsx";
 import { HisStatusPill, Loading, Pill, QueuePill, ReadyPill, fmtDateTime } from "./ui.jsx";
 
 const dmy = (iso) => String(iso || "").split("-").reverse().join("-");
 const STAGE_TONE = { read: "wa", delivered: "wa", sent: "ok", failed: "bad", no_phone: "bad", review: "warn", sending: "info", excluded: "muted" };
 const TRIGGER = { MANUAL: "by hand", AUTO_DELAYED: "automatic", AUTO_EOD: "daily send", AUTO_RETRY: "automatic retry", AUTO_IMMEDIATE: "automatic", WEBHOOK: "HIS push" };
+
+const kb = (bytes) => (bytes >= 1048576 ? `${(bytes / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`);
+
+/** Is a copy of the lab report PDF saved on the server, and from when (services/reportPdf.js). */
+function SavedPdf({ pdf, readiness }) {
+  if (!pdf) return null;
+  let text;
+  if (pdf.saved && pdf.stale) {
+    text = (
+      <>
+        <Pill tone="warn">saved copy, out of date</Pill> from <b>{fmtDateTime(pdf.fetchedAt)}</b> — results changed since; the next open fetches it again from AOSTA
+      </>
+    );
+  } else if (pdf.saved) {
+    text = (
+      <>
+        <Pill tone="ok">saved copy</Pill> fetched from AOSTA <b>{fmtDateTime(pdf.fetchedAt)}</b>
+        {pdf.size ? ` · ${kb(pdf.size)}` : ""}
+      </>
+    );
+  } else if (readiness === "READY") {
+    text = <>No saved copy yet — it is saved on the first open or just before sending.</>;
+  } else {
+    text = <>Not saved — the PDF is fetched live from AOSTA until every result is approved.</>;
+  }
+  return (
+    <p className="op-info-note op-info-pdf">
+      <FilePdfIcon size={13} /> <span>Report PDF: {text}</span>
+    </p>
+  );
+}
 
 function Fact({ label, children }) {
   return (
@@ -105,6 +136,7 @@ function OrderPanel({ orderId, day, canCheck, onClose }) {
                     <ClockIcon size={13} /> Goes out on WhatsApp at <b>{fmtDateTime(data.plannedSendAt)}</b>
                   </p>
                 )}
+                <SavedPdf pdf={data.pdf} readiness={data.readiness} />
               </section>
 
               <section className="um-section">

@@ -204,6 +204,63 @@ function NoticePreview({ values }) {
   );
 }
 
+const diskSize = (bytes) => {
+  const b = Number(bytes || 0);
+  if (b >= 1073741824) return `${(b / 1073741824).toFixed(2)} GB`;
+  if (b >= 1048576) return `${(b / 1048576).toFixed(1)} MB`;
+  return b ? `${Math.max(1, Math.round(b / 1024))} KB` : '0 MB';
+};
+
+/** How many report PDFs are saved and how much disk they use (services/reportPdf.js pdfCacheUsage). */
+function PdfCacheUsage({ usage, values }) {
+  if (!usage) return null;
+  const sweep = usage.lastSweep;
+  return (
+    <>
+      {!usage.writable && (
+        <div className="ms-callout is-warn">
+          <AlertIcon size={15} />
+          <span>
+            The server can’t write to the PDF folder, so nothing is saved — reports are fetched from AOSTA each time. On the server:{' '}
+            <code>mkdir -p data/reports &amp;&amp; chown 1000:1000 data/reports &amp;&amp; chmod 700 data/reports</code>, then restart the backend.
+          </span>
+        </div>
+      )}
+      <div className="ms-pdf-usage">
+        <div>
+          <small>Saved PDFs</small>
+          <b>{num(usage.files)}</b>
+          {usage.stale > 0 && <span>{num(usage.stale)} out of date</span>}
+        </div>
+        <div>
+          <small>Disk used</small>
+          <b>{diskSize(usage.bytes)}</b>
+          {usage.files > 0 && <span>about {diskSize(usage.bytes / usage.files)} each</span>}
+        </div>
+        <div>
+          <small>Oldest copy</small>
+          <b>{usage.oldest ? fmtWhen(usage.oldest) : '—'}</b>
+          {values['pdf.cacheDays'] && <span>kept {values['pdf.cacheDays']} days</span>}
+        </div>
+        <div>
+          <small>Last clean-up</small>
+          <b>{sweep ? fmtWhen(sweep.at) : 'Not yet'}</b>
+          <span>
+            {sweep ? `removed ${num(sweep.expired)} expired, ${num(sweep.missingFiles + sweep.orphanFiles)} stray` : 'Runs every night at 03:15'}
+          </span>
+        </div>
+      </div>
+      <div className="ms-callout">
+        <ShieldCheckIcon size={15} />
+        <span>
+          Kept in <code>data/reports</code> on the server and only opened through the portal or a patient’s expiring link. Not in the nightly database
+          backup.{usage.queued ? ` ${plural(usage.queued, 'report')} waiting to be fetched ahead.` : ''}
+        </span>
+      </div>
+    </>
+  );
+}
+
 function SectionExtra({ id, values, live, onNavigate }) {
   switch (id) {
     case 'features':
@@ -243,6 +300,8 @@ function SectionExtra({ id, values, live, onNavigate }) {
           </button>
         </div>
       ) : null;
+    case 'pdf':
+      return <PdfCacheUsage usage={live?.pdfCache} values={values} />;
     case 'notice':
       return <NoticePreview values={values} />;
     default:

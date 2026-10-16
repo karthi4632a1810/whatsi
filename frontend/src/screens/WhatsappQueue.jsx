@@ -381,7 +381,7 @@ export default function WhatsappQueue({ canSend = false }) {
                             <button
                               type="button"
                               className="btn btn-view-pdf"
-                              onClick={() => setPreviewOrder({ orderId: r.reportId, patientId: r.patientId, patientName: r.patientName, procIds: r.procIds || [], hisReportUrl: r.hisReportUrl || "" })}
+                              onClick={() => setPreviewOrder({ orderId: r.reportId, reportDay: r.reportDay, patientId: r.patientId, patientName: r.patientName, procIds: r.procIds || [], hisReportUrl: r.hisReportUrl || "" })}
                             >
                               <FilePdfIcon size={15} />
                               <span>PDF</span>
@@ -403,7 +403,7 @@ export default function WhatsappQueue({ canSend = false }) {
         </div>
       )}
 
-      <PdfPreviewModal order={previewOrder} onClose={() => setPreviewOrder(null)} />
+      <PdfPreviewModal order={previewOrder} onClose={() => setPreviewOrder(null)} canRefresh={canSend} />
       <WatiTestSendModal open={Boolean(sendModal)} onClose={() => !busy && setSendModal(null)} onConfirm={confirmTestSend} contacts={testContacts} reportLabel={sendModal?.reportName || ""} busy={busy} />
     </div>
   );

@@ -667,7 +667,7 @@ export default function HisBoard({ canSend = false, canChangeMode = false, refre
         </div>
       )}
 
-      <PdfPreviewModal order={previewOrder} onClose={() => setPreviewOrder(null)} />
+      <PdfPreviewModal order={previewOrder} onClose={() => setPreviewOrder(null)} canRefresh={canSend} />
     </div>
   );
 }
