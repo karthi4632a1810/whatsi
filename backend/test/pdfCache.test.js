@@ -5,7 +5,7 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 
-const { createPdfCache, memoryStore, pdfProblem, pdfContentKey, cacheRelPath } = await import("../src/services/pdfCache.js");
+const { createPdfCache, memoryStore, pdfProblem, pdfContentKey, cacheRelPath, trimPdf } = await import("../src/services/pdfCache.js");
 
 // A real-looking PDF: header, some body, end marker.
 const pdf = (text) => Buffer.from(`%PDF-1.4\n${text}\n${"x".repeat(2000)}\n%%EOF\n`, "latin1");
@@ -35,7 +35,7 @@ async function setup(t, { enabled = true } = {}) {
     return Buffer.from(await res.arrayBuffer());
   };
   let clock = new Date("2026-10-16T09:00:00Z");
-  const cache = createPdfCache({ dir, store, fetchPdf, enabled: () => enabled, now: () => clock, log: { warn() {} } });
+  const cache = createPdfCache({ dir, store, fetchPdf, enabled: () => enabled, now: () => clock, log: { warn() {}, info() {} } });
   t.after(async () => {
     await emr.close();
     await fs.rm(dir, { recursive: true, force: true });
@@ -56,12 +56,25 @@ async function setup(t, { enabled = true } = {}) {
   return { dir, emr, store, cache, order, ctx, setClock: (d) => (clock = d) };
 }
 
-test("pdfProblem: real PDFs pass; EMR error pages, cut-off and tiny files don't", () => {
+test("pdfProblem: real PDFs pass; EMR error pages, empty and tiny files don't", () => {
   assert.equal(pdfProblem(pdf("ok")), null);
   assert.match(pdfProblem(Buffer.from("<!DOCTYPE html><html><body>Runtime error</body></html>")), /web page/);
   assert.match(pdfProblem(Buffer.from("%PDF-1.4 tiny %%EOF")), /too small/);
-  assert.match(pdfProblem(Buffer.from(`%PDF-1.4\n${"x".repeat(3000)}`)), /cut off/);
+  assert.equal(pdfProblem(Buffer.from(`%PDF-1.4\n${"x".repeat(3000)}`)), null, "no end marker alone doesn't stop it being shown");
   assert.match(pdfProblem(Buffer.alloc(0)), /empty/);
+});
+
+// LabReport.aspx writes the PDF, then its own page's HTML after it.
+const aspxPage = `\r\n<!DOCTYPE html>\r\n<html><body><form method="post" action="./LabReport.aspx">${"<input type=hidden value=abc>".repeat(300)}</form></body></html>`;
+
+test("trimPdf: anything after the last %%EOF is cut; no end marker = not complete", () => {
+  const clean = pdf("ok");
+  assert.deepEqual(trimPdf(clean), { buffer: clean, complete: true, trimmed: 0 });
+  const t = trimPdf(Buffer.concat([clean, Buffer.from(aspxPage)]));
+  assert.ok(t.buffer.equals(clean));
+  assert.equal(t.complete, true);
+  assert.equal(t.trimmed, aspxPage.length);
+  assert.equal(trimPdf(Buffer.from(`%PDF-1.4\n${"x".repeat(3000)}`)).complete, false);
 });
 
 test("file names carry only the order id and a hash, in YYYY/MM/DD folders", () => {
@@ -141,6 +154,30 @@ test("AOSTA returns an error page: not saved, and the saved copy is used instead
   await cache.get(ctx());
   emr.state.respond = () => ({ status: 200, body: "<html>Session expired</html>", type: "text/html" });
   assert.equal((await cache.get(ctx(), { fresh: true })).source, "stale-cache");
+});
+
+test("AOSTA appends its web page after the PDF: shown and saved without it", async (t) => {
+  const { cache, emr, store, dir, ctx } = await setup(t);
+  emr.state.respond = () => ({ status: 200, body: Buffer.concat([pdf("report v1"), Buffer.from(aspxPage)]) });
+  const first = await cache.get(ctx());
+  assert.equal(first.source, "fresh");
+  assert.equal(first.saved, true);
+  assert.ok(first.buffer.equals(pdf("report v1")), "the page after %%EOF is removed");
+  const row = await store.get("386209");
+  assert.ok((await fs.readFile(path.join(dir, row.path))).equals(pdf("report v1")));
+  assert.equal((await cache.get(ctx())).source, "cache");
+  assert.equal(emr.state.hits, 1);
+});
+
+test("no end marker at all: still shown, but not saved", async (t) => {
+  const { cache, emr, store, ctx } = await setup(t);
+  emr.state.respond = () => ({ status: 200, body: Buffer.from(`%PDF-1.4\n${"x".repeat(3000)}`) });
+  const r = await cache.get(ctx());
+  assert.equal(r.source, "fresh");
+  assert.equal(r.saved, false);
+  assert.equal(await store.get("386209"), null);
+  assert.equal((await cache.get(ctx())).source, "fresh", "asked AOSTA again next time");
+  assert.equal(emr.state.hits, 2);
 });
 
 test("partly approved: always fetched live, never saved", async (t) => {

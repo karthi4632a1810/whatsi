@@ -171,9 +171,31 @@ export async function pdfCacheUsage() {
   return { ...(await pdfCache.usage()), queued: queue.size, lastSweep };
 }
 
-/** Start-up: check the folder and say how much is there. */
+/**
+ * Today's READY orders with no saved copy, queued to fetch ahead. The board only
+ * triggers a fetch when an order changes, so this catches up after a restart
+ * (or after fetches failed earlier in the day).
+ */
+export async function prefetchTodayMissing() {
+  if (!config.pdfCache.prefetch || !setting("pdf.cacheEnabled")) return 0;
+  const labDay = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date());
+  const ready = await HisLabOrder.find({ labDay, opIpType: DELIVERY_OP_IP_TYPE, readiness: "READY" }).select("orderId").lean();
+  if (!ready.length) return 0;
+  const saved = new Set(await PdfCacheEntry.distinct("orderId", { orderId: { $in: ready.map((o) => String(o.orderId)) }, stale: { $ne: true } }));
+  const missing = ready.filter((o) => !saved.has(String(o.orderId)));
+  for (const o of missing) schedulePrefetch(o.orderId, labDay);
+  return missing.length;
+}
+
+/** Start-up: check the folder, say how much is there, and catch up on today's reports. */
 export async function startPdfCache() {
   const ok = await pdfCache.checkWritable();
   const u = await pdfCache.usage();
   console.log(`[pdf-cache] ${ok ? "ready" : "NOT writable — PDFs fetched live"}: ${u.files} PDFs, ${mb(u.bytes)} in ${u.dir}`);
+  if (!ok) return;
+  setTimeout(() => {
+    prefetchTodayMissing()
+      .then((n) => n && console.log(`[pdf-cache] fetching ahead ${n} of today's ready reports with no saved copy`))
+      .catch((e) => console.warn(`[pdf-cache] catch-up: ${e.message}`));
+  }, 30_000).unref?.();
 }

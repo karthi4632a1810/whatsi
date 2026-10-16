@@ -32,7 +32,7 @@ const MAX_PDF_BYTES = 25 * 1024 * 1024;
 const httpError = (message, status, code) => Object.assign(new Error(message), { status, code, expose: true });
 const sha256 = (buf) => crypto.createHash("sha256").update(buf).digest("hex");
 
-/** null if this looks like a real PDF, else why not (an EMR error page, a cut-off download…). */
+/** null if this looks like a real PDF, else why not (an EMR error page, an empty or tiny answer…). */
 export function pdfProblem(buffer) {
   if (!Buffer.isBuffer(buffer) || !buffer.length) return "empty response";
   if (buffer.subarray(0, 5).toString("latin1") !== "%PDF-") {
@@ -41,8 +41,22 @@ export function pdfProblem(buffer) {
   }
   if (buffer.length < MIN_PDF_BYTES) return `too small for a lab report (${buffer.length} bytes)`;
   if (buffer.length > MAX_PDF_BYTES) return `too large (${Math.round(buffer.length / 1048576)} MB)`;
-  if (!buffer.subarray(-2048).toString("latin1").includes("%%EOF")) return "the PDF is cut off (no end marker)";
   return null;
+}
+
+/**
+ * The PDF without anything after its last %%EOF: LabReport.aspx can append its
+ * own web page after the PDF bytes (browsers ignore it; it isn't part of the
+ * report). complete=false: no end marker at all — still shown, but not saved,
+ * in case the download was cut short.
+ */
+export function trimPdf(buffer) {
+  const at = buffer.lastIndexOf("%%EOF");
+  if (at < 0) return { buffer, complete: false, trimmed: 0 };
+  let end = at + 5;
+  if (buffer[end] === 0x0d) end += 1;
+  if (buffer[end] === 0x0a) end += 1;
+  return { buffer: end < buffer.length ? buffer.subarray(0, end) : buffer, complete: true, trimmed: buffer.length - end };
 }
 
 /** What a report PDF is made from — a change means a saved copy is out of date. */
@@ -79,6 +93,8 @@ export function cacheRelPath({ orderId, labDay, checksum, now = new Date() }) {
 export function createPdfCache({ dir, store, fetchPdf, enabled = () => true, now = () => new Date(), log = console }) {
   const root = path.resolve(dir);
   let writable = null; // unknown until the first check
+  let trimNoted = false;
+  const incompleteNoted = new Set();
 
   const abs = (rel) => {
     const full = path.resolve(root, rel);
@@ -164,13 +180,27 @@ export function createPdfCache({ dir, store, fetchPdf, enabled = () => true, now
     }
 
     let buffer;
+    let complete = false;
     let failure;
     try {
       const url = await ctx.resolveUrl();
       if (!url) throw httpError("The report address isn't known yet (procedure IDs not found in the EMR)", 404, "NO_URL");
-      buffer = await fetchPdf(url);
+      const raw = await fetchPdf(url);
+      const trimmed = trimPdf(raw);
+      buffer = trimmed.buffer;
+      complete = trimmed.complete;
       const problem = pdfProblem(buffer);
       if (problem) throw httpError(`AOSTA didn't return a usable PDF: ${problem}`, 502, "NOT_PDF");
+      if (trimmed.trimmed > 2 && !trimNoted) {
+        trimNoted = true;
+        const page = /<html|<!doctype|<form/i.test(raw.subarray(-trimmed.trimmed).subarray(0, 4096).toString("latin1"));
+        log.info?.(`[pdf-cache] AOSTA adds ${trimmed.trimmed} bytes after the end of the PDF (${page ? "its web page" : "other data"}) — removed (shown once)`);
+      }
+      if (!complete && !incompleteNoted.has(ctx.orderId)) {
+        if (incompleteNoted.size > 5000) incompleteNoted.clear();
+        incompleteNoted.add(ctx.orderId);
+        log.warn?.(`[pdf-cache] order ${ctx.orderId}: AOSTA's PDF has no end marker (${raw.length} bytes) — shown, not saved`);
+      }
     } catch (error) {
       failure = error;
     }
@@ -178,7 +208,7 @@ export function createPdfCache({ dir, store, fetchPdf, enabled = () => true, now
     if (!failure) {
       const fetchedAt = now();
       let saved = false;
-      if (on && ready) {
+      if (on && ready && complete) {
         try {
           saved = Boolean(await save(ctx, buffer, fetchedAt));
         } catch (error) {

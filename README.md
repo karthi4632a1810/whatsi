@@ -94,7 +94,9 @@ when the EMR is down.
 - **What is saved:** only orders with every result approved. Partly approved reports are
   always fetched live. A copy is fetched ahead when an order turns READY on the board and
   just before a WhatsApp send; otherwise on first open. AOSTA's answer must be a real
-  PDF (`%PDF-`, sensible size, end marker) — an EMR error page is never saved.
+  PDF (`%PDF-`, sensible size) — an EMR error page is never saved. Anything AOSTA sends after
+  the PDF's `%%EOF` (its own web page) is dropped; a PDF with no `%%EOF` at all is shown but not saved.
+  Today's ready reports without a saved copy are also fetched ahead 30 s after the backend starts.
 - **Out of date:** when a board refresh shows the order changed (procedure IDs, approved
   count or result values), the copy is marked stale and fetched again next time. Staff who
   can send can also press **Get fresh from AOSTA** in the PDF preview.
