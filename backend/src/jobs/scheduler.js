@@ -10,6 +10,7 @@ import {
 import { recoverBoardState } from "../services/hisBoardStore.js";
 import { runDeliveryChecks } from "../services/delivery.js";
 import { isReadOnlyMode } from "../services/appSettings.js";
+import { startPdfCache, sweepPdfCache } from "../services/reportPdf.js";
 
 // What the jobs last did — shown on the dashboard and in Settings.
 const jobState = {
@@ -115,5 +116,8 @@ export function startScheduler() {
   }
   cron.schedule("* * * * *", senderJob, { noOverlap: true });
   cron.schedule("*/2 * * * *", deliveryJob, { noOverlap: true });
+  // Saved lab report PDFs: what's there now, then a clean-up every night after the 02:00 backup.
+  startPdfCache().catch((e) => console.warn("[pdf-cache]", e.message));
+  cron.schedule("15 3 * * *", () => sweepPdfCache().catch((e) => console.error("[pdf-cache] sweep failed", e.message)), { noOverlap: true, timezone: "Asia/Kolkata" });
   console.log("[cron] WhatsApp sender every minute · delivery checks every 2 minutes");
 }

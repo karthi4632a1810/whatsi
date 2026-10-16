@@ -180,7 +180,9 @@ export function describe(e) {
     case "copy":
       return `Copied ${d.label || "a value"} ${d.value || ""}`.trim();
     case "pdf_open":
-      return `Opened the lab report of ${patient(t)}`;
+      return `Opened the lab report of ${patient(t)}${
+        { cache: " (saved copy)", fresh: " (fresh from AOSTA)", live: " (live from AOSTA, partly approved)", "stale-cache": " (saved copy — AOSTA didn't answer)" }[d.source] || ""
+      }${d.fresh ? " — asked for a fresh copy" : ""}`;
     case "his_refresh":
       return `Refreshed the OP board from HIS${d.date ? ` for ${dmy(d.date)}` : ""}`;
     case "queue_sync":

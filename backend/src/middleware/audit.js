@@ -35,7 +35,8 @@ const RULES = [
   ["POST", re("/api/lab-results/search"), "search", ({ req, ok }) => (ok ? { screen: "labFinder", details: { query: summarise(req.body) } } : null)],
   ["POST", re("/api/lab-results/export"), "export", ({ req, ok }) =>
     ok ? { screen: "labFinder", details: { what: "Lab Finder results", format: "csv", query: summarise(req.body?.query) } } : null],
-  ["GET", re(`/api/his/pdf/${ID}`), "pdf_open", ({ m, ok }) => (ok ? { screen: "reports", target: { orderId: short(m[1], 30) } } : null)],
+  ["GET", re(`/api/his/pdf/${ID}`), "pdf_open", ({ m, req, res, ok }) =>
+    ok ? { screen: "reports", target: { orderId: short(m[1], 30) }, details: { source: res.locals.pdfSource, fresh: req.query.fresh ? true : undefined } } : null],
 
   ["POST", re("/api/his/lab-today/refresh"), "his_refresh", ({ req, ok }) => (ok ? { screen: "reports", details: { date: short(req.body?.date, 10) } } : null)],
   ["POST", re("/api/op/refresh"), "his_refresh", ({ req, ok }) => (ok ? { screen: "reports", details: { date: short(req.body?.from || req.body?.date, 10) } } : null)],

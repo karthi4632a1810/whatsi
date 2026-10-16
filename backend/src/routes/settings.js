@@ -10,6 +10,7 @@ import { readWatiApiUsage } from "../services/watiCache.js";
 import { parseClock } from "../utils/schedule.js";
 import { settingsScreen, updateSettings } from "../services/appSettings.js";
 import { listUsers } from "../services/users.js";
+import { pdfCacheUsage } from "../services/reportPdf.js";
 
 const router = express.Router();
 
@@ -114,6 +115,7 @@ async function settingsLive() {
   const staff = users.filter((u) => !u.isSuperAdmin && u.active !== false);
   const automation = await getSettings().catch(() => null);
   return {
+    pdfCache: await pdfCacheUsage().catch(() => null),
     staffCount: staff.length,
     superAdmins: users.filter((u) => u.isSuperAdmin).length,
     sendingOn: automation ? Boolean(automation.messageSendEnabled) : null,

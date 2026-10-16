@@ -13,6 +13,21 @@ import { fileURLToPath } from "node:url";
 import dotenv from "dotenv";
 import mongoose from "mongoose";
 import { startMockWati } from "./mock-wati.mjs";
+import http from "node:http";
+import os from "node:os";
+import fs from "node:fs/promises";
+import path from "node:path";
+
+// Fake EMR (AOSTA LabReport.aspx) for the PDF cache — the real one is never called.
+const emr = { up: true, hits: 0 };
+const fakePdf = (text) => Buffer.from(`%PDF-1.4\n${text}\n${"x".repeat(2000)}\n%%EOF\n`, "latin1");
+const emrServer = http.createServer((req, res) => {
+  emr.hits += 1;
+  if (!emr.up) return res.writeHead(500, { "Content-Type": "text/html" }).end("<html>Server Error</html>");
+  res.writeHead(200, { "Content-Type": "application/pdf" }).end(fakePdf(req.url));
+});
+await new Promise((r) => emrServer.listen(9912, "127.0.0.1", r));
+const pdfDir = await fs.mkdtemp(path.join(os.tmpdir(), "whatsi-pdf-it-"));
 
 dotenv.config({ path: fileURLToPath(new URL("../../.env", import.meta.url)) });
 const { MONGO_APP_USER, MONGO_APP_PASSWORD } = process.env;
@@ -29,6 +44,9 @@ Object.assign(process.env, {
   EMR_POLL_ENABLED: "false",
   JWT_SECRET: "integration-test-secret-0123456789",
   PUBLIC_BASE_URL: "https://whatsi.test.example",
+  EMR_REPORT_BASE_URL: "http://127.0.0.1:9912/BB15SE/Lab/CRReport/LabReport.aspx",
+  PDF_CACHE_DIR: pdfDir,
+  PDF_PREFETCH: "false",
 });
 
 if (!/\/[^/?]*test[^/?]*(\?|$)/i.test(process.env.MONGODB_URI)) {
@@ -347,10 +365,52 @@ await check("WhatsApp Monitor: counts, coverage, attention, patients, activity, 
   assert.match(wati.webhookPath, /^\/api\/webhooks\/wati\/[a-f0-9]{32}$/);
 });
 
+await check("PDF cache: saved before the send, patient link served from it with AOSTA down, stale after a change, partial not saved", async () => {
+  const reportPdf = await import(`${SRC}/services/reportPdf.js`);
+  const { PdfCacheEntry } = models;
+  // A was sent with a private whatsi link → its PDF was saved just before.
+  const entry = await PdfCacheEntry.findOne({ orderId: "900001" }).lean();
+  assert.ok(entry, "saved before the send");
+  await fs.access(path.join(pdfDir, entry.path));
+  assert.match(entry.path, /^\d{4}\/\d{2}\/\d{2}\/900001-[a-f0-9]{12}\.pdf$/);
+  const reportA = await Report.findOne({ reportId: "900001" }).lean();
+
+  emr.up = false;
+  const hitsBefore = emr.hits;
+  const viaLink = await reportPdf.getReportPdf(reportA);
+  assert.equal(viaLink.source, "cache");
+  assert.equal(emr.hits, hitsBefore, "the saved copy didn't need AOSTA");
+
+  // HIS changes a result → stale; AOSTA down → the old copy, labelled.
+  const changed = await HisLabOrder.findOneAndUpdate(
+    { orderId: "900001" },
+    { $set: { "procedures.0.result": "11.2 g/dl" } },
+    { new: true }
+  ).lean();
+  await reportPdf.onBoardOrderSaved(changed);
+  assert.equal((await PdfCacheEntry.findOne({ orderId: "900001" }).lean()).stale, true);
+  const down = await reportPdf.getOrderPdf("900001");
+  assert.equal(down.source, "stale-cache");
+  emr.up = true;
+  const back = await reportPdf.getOrderPdf("900001");
+  assert.equal(back.source, "fresh");
+  assert.equal((await PdfCacheEntry.findOne({ orderId: "900001" }).lean()).stale, false);
+
+  // Partly approved → live, never saved.
+  await HisLabOrder.create(order(900011, { readiness: "PARTIAL", approvedCount: 1, hisStatus: "IN PROCESS" }));
+  assert.equal((await reportPdf.getOrderPdf("900011")).source, "live");
+  assert.equal(await PdfCacheEntry.findOne({ orderId: "900011" }), null);
+
+  const sweep = await reportPdf.sweepPdfCache();
+  assert.ok(sweep.files >= 1 && sweep.bytes > 0 && sweep.expired === 0);
+});
+
 // KEEP_TEST_DATA=1 leaves the test database filled (e.g. to look at the screens).
 if (!process.env.KEEP_TEST_DATA) await emptyDb();
 await mongoose.disconnect();
 await wati.close();
+await new Promise((r) => emrServer.close(r));
+await fs.rm(pdfDir, { recursive: true, force: true });
 
 for (const [status, name, detail] of results) console.log(`${status}  ${name}${detail ? `\n      → ${detail}` : ""}`);
 const failed = results.filter((r) => r[0] === "FAIL").length;

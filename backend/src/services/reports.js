@@ -655,6 +655,11 @@ export async function sendReportById(
 
     // A private expiring whatsi link when PUBLIC_BASE_URL is set, else the EMR URL.
     const attachmentUrl = reportLinkFor(claimed) || claimed.hisReportUrl;
+    // The patient's link is served from whatsi's saved copy: make sure there is one
+    // (waits at most 15 s; without PUBLIC_BASE_URL, WATI fetches from AOSTA itself).
+    const { warmBeforeSend } = await import("./reportPdf.js");
+    if (attachmentUrl !== claimed.hisReportUrl) await warmBeforeSend(claimed.reportId, claimed.reportDay);
+    else warmBeforeSend(claimed.reportId, claimed.reportDay).catch(() => {});
     for (const phone of deliveryPhones) {
       lastResponse = await sendLabReportMessage({
         phone,

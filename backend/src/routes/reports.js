@@ -20,6 +20,8 @@ import {
   looksLikeEmrOrderId,
 } from "../services/emr.js";
 import { escapeRegex } from "../utils/text.js";
+import { getOrderPdf } from "../services/reportPdf.js";
+import { effectivePermissions, isSuperAdmin } from "../services/users.js";
 import { plannedSendAt, scheduleNote } from "../utils/schedule.js";
 import { sendFlags } from "../services/opBoard.js";
 import { reportDayKey, startOfToday, endOfToday, parseQueryDate } from "../utils/dates.js";
@@ -364,47 +366,34 @@ router.get("/his/pdf-url/:orderId", async (req, res) => {
   }
 });
 
+/**
+ * The lab report PDF for logged-in screens: the saved copy when it's current,
+ * else fresh from AOSTA (and saved when the order is READY); AOSTA down → the
+ * saved copy, labelled. ?fresh=1 skips the copy (staff who may send only).
+ * X-Pdf-Source: cache | fresh | live | stale-cache · X-Pdf-Fetched-At: ISO time.
+ */
 router.get("/his/pdf/:orderId", async (req, res) => {
+  const fresh = req.query.fresh === "1" || req.query.fresh === "true";
+  if (fresh && !isSuperAdmin(req.user) && effectivePermissions(req.user).screens?.reports !== "write") {
+    return res.status(403).json({ error: "Only staff who can send reports can fetch a fresh copy from AOSTA" });
+  }
   try {
-    const { pdfUrl, procIds, source } = await resolveOrderPdfUrl(req.params.orderId, {
+    const pdf = await getOrderPdf(req.params.orderId, {
+      day: String(req.query.day || ""),
       procIds: parseProcIdsQuery(req.query.procIds),
+      fresh,
     });
-    if (!pdfUrl) {
-      return res.status(404).json({
-        error: "PDF not available for this order (procedure IDs not resolved from EMR)",
-        orderId: req.params.orderId,
-        procIds,
-        source,
-      });
-    }
-
-    if (!isEmrReportUrl(pdfUrl)) {
-      return res.status(400).json({ error: "Stored report link is not an EMR report URL" });
-    }
-    const upstream = await fetch(pdfUrl, { signal: AbortSignal.timeout(60_000) });
-    if (!upstream.ok) {
-      return res.status(upstream.status).json({ error: `EMR PDF fetch failed (${upstream.status})` });
-    }
-
-    const buffer = Buffer.from(await upstream.arrayBuffer());
-    const contentType = upstream.headers.get("content-type") || "";
-    const looksLikePdf =
-      buffer.slice(0, 5).toString() === "%PDF-" || contentType.toLowerCase().includes("pdf");
-    if (!looksLikePdf) {
-      return res.status(502).json({
-        error:
-          "EMR returned HTML instead of a PDF. Procedure IDs for this order are not available yet.",
-        orderId: req.params.orderId,
-        procIds,
-        source,
-      });
-    }
-
-    res.setHeader("Content-Type", contentType.includes("pdf") ? contentType : "application/pdf");
+    res.locals.pdfSource = pdf.source; // middleware/audit.js
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Length", pdf.buffer.length);
     res.setHeader("Content-Disposition", `inline; filename="lab-${req.params.orderId}.pdf"`);
-    res.send(buffer);
+    res.setHeader("Cache-Control", "private, no-store");
+    res.setHeader("X-Pdf-Source", pdf.source);
+    if (pdf.fetchedAt) res.setHeader("X-Pdf-Fetched-At", new Date(pdf.fetchedAt).toISOString());
+    if (pdf.stale) res.setHeader("X-Pdf-Stale", "1");
+    res.send(pdf.buffer);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(error.status || 500).json({ error: error.expose || error.status ? error.message : "Couldn't get the PDF", code: error.code, orderId: req.params.orderId });
   }
 });
 

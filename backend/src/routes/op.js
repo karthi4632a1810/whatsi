@@ -14,6 +14,7 @@ import { reportDayKey } from "../utils/dates.js";
 import { deriveStage, plannedSendAt } from "../utils/schedule.js";
 import { groupTests, splitTestName } from "../utils/emrParse.js";
 import { checkMessageNow } from "../services/delivery.js";
+import { pdfCacheInfo } from "../services/reportPdf.js";
 
 const router = express.Router();
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -84,6 +85,7 @@ router.get(
     const override = contact?.phoneOverride || "";
 
     const stage = deriveStage({ order, report, settings, flags: sendFlags(settings) });
+    const pdf = await pdfCacheInfo(orderId, order).catch(() => ({ saved: false }));
     const planned = report?.status === "PENDING" ? plannedSendAt(report, settings) : null;
     const timeline = [
       order?.requestDate && { at: order.requestDate, label: "Tests ordered" },
@@ -156,6 +158,7 @@ router.get(
           }
         : null,
       procIds: report?.procIds?.length ? report.procIds : order?.procIds || [],
+      pdf,
       messages: messages.map((m) => ({
         id: String(m._id),
         status: m.status,

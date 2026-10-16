@@ -10,6 +10,7 @@ import {
 } from "./emr.js";
 import { reportDayKey, parseQueryDate, buildDayTimeChunks, enumerateDays } from "../utils/dates.js";
 import { config } from "../config.js";
+import { onBoardOrderSaved } from "./reportPdf.js";
 
 const INCREMENTAL_CONCURRENCY = 8;
 const activeBoardRefreshes = new Map();
@@ -298,6 +299,8 @@ async function upsertBoardOrder(labDay, order) {
     doc,
     { upsert: true, new: true }
   );
+  // Saved PDF: stale if what the report is made of changed; fetched ahead once READY.
+  onBoardOrderSaved(saved.toObject()).catch(() => {});
   return { changed: true, order: boardOrderFromDocument(saved) };
 }
 
