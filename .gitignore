@@ -36,6 +36,8 @@ Thumbs.db
 
 # Docker Mongo host data (keep on disk — do not commit)
 data/mongo/
+# Saved lab report PDFs (patient data) — never commit
+data/reports/
 
 # IDE / editor
 .idea/

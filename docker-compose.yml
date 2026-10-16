@@ -43,6 +43,13 @@ services:
       MONGODB_URI: mongodb://${MONGO_APP_USER}:${MONGO_APP_PASSWORD}@mongo:27017/whatsi?authSource=whatsi
       TZ: Asia/Kolkata
       NODE_ENV: production
+      PDF_CACHE_DIR: /app/data/reports
+    # Saved lab report PDFs. The host folder must exist and belong to uid 1000
+    # (the backend's "node" user), mode 700:  mkdir -p data/reports && chown 1000:1000 data/reports && chmod 700 data/reports
+    # Not served by nginx or anything else — only through the API. Not in the nightly
+    # mongodump either (copy the folder off the machine too if you want it backed up).
+    volumes:
+      - ./data/reports:/app/data/reports
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://localhost:5001/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 30s

@@ -79,6 +79,44 @@ that expires after `REPORT_LINK_DAYS` (default 2), e.g.
 own address, which anyone can guess by changing the order number. whatsi fetches the PDF
 from the EMR itself.
 
+### Saved lab report PDFs
+
+Fully approved OP lab reports are kept as PDF files on the server, so they open fast,
+AOSTA is asked less often, and a report still opens (with a "saved copy from …" note)
+when the EMR is down.
+
+- **Where:** `./data/reports/YYYY/MM/DD/<orderId>-<hash>.pdf` on the host, mounted at
+  `/app/data/reports` in the backend. Files are `600`, folders `700`, owned by uid 1000
+  (the backend's `node` user). The order id is the only patient detail in a name.
+  Details (size, checksum, when fetched, the procedure IDs used, stale or not) are in
+  MongoDB (`pdfcacheentries`); the files are **not** in MongoDB or in the nightly
+  mongodump — copy `data/reports` off the machine as well if you want them backed up.
+- **What is saved:** only orders with every result approved. Partly approved reports are
+  always fetched live. A copy is fetched ahead when an order turns READY on the board and
+  just before a WhatsApp send; otherwise on first open. AOSTA's answer must be a real
+  PDF (`%PDF-`, sensible size, end marker) — an EMR error page is never saved.
+- **Out of date:** when a board refresh shows the order changed (procedure IDs, approved
+  count or result values), the copy is marked stale and fetched again next time. Staff who
+  can send can also press **Get fresh from AOSTA** in the PDF preview.
+- **Never exposed directly:** the folder is only read by the API — the logged-in
+  `/api/his/pdf/:orderId` (permissions + audit log) and the expiring patient links.
+- **Retention:** `PDF_CACHE_DAYS` (default 120) in `.env`, changeable in Settings →
+  Master Settings → Saved lab report PDFs, which also shows how many files and how much
+  disk they use. A nightly clean-up at 03:15 deletes older copies, records whose file is
+  gone and files no record points to; the backend log shows the totals each time.
+- **Clear it:** `docker compose exec backend node scripts/clearPdfCache.js` (all) or
+  `… clearPdfCache.js --stale` (out-of-date copies only). Everything is fetched from AOSTA
+  again when next opened. Switching **Save report PDFs** off in Master Settings stops
+  saving new copies (existing ones are still used if AOSTA is down, until they expire).
+- **First time on a server:**
+
+  ```bash
+  mkdir -p data/reports && sudo chown 1000:1000 data/reports && sudo chmod 700 data/reports
+  ```
+
+  If the folder isn't writable the backend says so at start-up and keeps working —
+  reports are then fetched live and not saved.
+
 ### Backups
 
 The `backup` container writes `backups/whatsi-YYYY-MM-DD.archive.gz` every night at
