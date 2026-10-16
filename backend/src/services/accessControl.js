@@ -77,6 +77,7 @@ const RULES = [
   ["POST", re(`/api/op/orders/${ID}/refresh`), screen("reports", "read")],
   ["POST", re("/api/op/refresh"), screen("reports", "write")],
   ["POST", re(`/api/op/orders/${ID}/(queue|send)`), screen("reports", "write")],
+  ["POST", re(`/api/op/messages/${ID}/check`), anyOf(screen("reports", "write"), screen("monitor", "write"))],
   ["PUT", re(`/api/his/orders/${ID}/pdf-meta`), screen("reports", "write")],
   ["POST", re("/api/his/pdf-meta/parse"), screen("reports", "write")],
   // A report PDF opens from any screen that lists it.

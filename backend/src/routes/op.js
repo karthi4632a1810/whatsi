@@ -12,7 +12,8 @@ import { getAnalytics } from "../services/analytics.js";
 import { refreshOrderFromEmr } from "../services/hisBoardStore.js";
 import { reportDayKey } from "../utils/dates.js";
 import { deriveStage, plannedSendAt } from "../utils/schedule.js";
-import { groupTests } from "../utils/emrParse.js";
+import { groupTests, splitTestName } from "../utils/emrParse.js";
+import { checkMessageNow } from "../services/delivery.js";
 
 const router = express.Router();
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -124,6 +125,18 @@ router.get(
         patientType: order?.patientType || report?.patientType || "",
       },
       readiness: order?.readiness || report?.readiness,
+      hisStatus: order?.hisStatus || "",
+      requestDate: order?.requestDate || null,
+      completedAt: order?.completedAt || report?.reportReadyAt || null,
+      age: order?.age || "",
+      gender: order?.gender || "",
+      doctor: order?.doctor || "",
+      lines: (order?.procedures || []).map((p) => ({
+        ...splitTestName(p.name),
+        status: p.status,
+        result: p.result || "",
+        completedAt: p.completedAt || null,
+      })),
       approvedCount: order?.approvedCount ?? report?.approvedCount ?? 0,
       procedureTotal: order?.procedureTotal ?? report?.procedureTotal ?? 0,
       tests: groupTests(order?.procedures || []),
@@ -155,6 +168,7 @@ router.get(
         triggerType: m.triggerType,
         sentBy: m.sentBy,
         template: m.templateName,
+        lastCheckedAt: m.lastCheckedAt || null,
       })),
       timeline,
     });
@@ -162,7 +176,7 @@ router.get(
 );
 
 /** Makes sure an approved OP order has a WhatsApp queue row (staff action). */
-async function ensureQueued(orderId, day) {
+async function ensureQueued(orderId, day, { allowPartial = false } = {}) {
   const existing = await Report.findOne({ reportId: orderId, opIpType: DELIVERY_OP_IP_TYPE }).sort({ updatedAt: -1 });
   if (existing) return existing;
   const order = await findOrder(orderId, day);
@@ -172,7 +186,8 @@ async function ensureQueued(orderId, day) {
     throw error;
   }
   const settings = await getSettings();
-  const allowed = order.readiness === "READY" || (settings.readinessRule === "PARTIAL" && order.readiness === "PARTIAL");
+  // A partly approved order only when the rule allows it, or the person sending confirmed it.
+  const allowed = order.readiness === "READY" || ((settings.readinessRule === "PARTIAL" || allowPartial) && order.readiness === "PARTIAL");
   if (!allowed) {
     const error = new Error(order.readiness === "WAITING" ? "No results are approved yet" : "Not all tests are approved yet");
     error.status = 400;
@@ -182,7 +197,7 @@ async function ensureQueued(orderId, day) {
     { ...order, procedures: order.procedures || [], completedAt: order.completedAt },
     order.labDay
   );
-  await syncPatientsAndReports([snapshot], { manual: true });
+  await syncPatientsAndReports([snapshot], { manual: true, allowPartial });
   const report = await Report.findOne({ reportId: orderId, reportDay: order.labDay });
   if (!report) {
     const error = new Error("Could not queue this order (check that it's an OP order with a patient type other than Z)");
@@ -204,7 +219,7 @@ router.post(
 router.post(
   "/op/orders/:orderId/send",
   wrap(async (req, res) => {
-    const report = await ensureQueued(req.params.orderId, String(req.body?.day || ""));
+    const report = await ensureQueued(req.params.orderId, String(req.body?.day || ""), { allowPartial: req.body?.force === true });
     const result = await sendReportById(report._id, {
       triggerType: "MANUAL",
       force: req.body?.force === true,
@@ -214,8 +229,34 @@ router.post(
     });
     res.json({
       sentPhones: result.sentPhones,
+      messageIds: result.messageIds,
       testSend: result.testSend,
       status: result.report.status,
+    });
+  })
+);
+
+/** Ticks for one sent message, asked from WATI now (the send popup and the info panel). */
+router.post(
+  "/op/messages/:messageId/check",
+  wrap(async (req, res) => {
+    const id = String(req.params.messageId);
+    if (!/^[a-f0-9]{24}$/i.test(id)) return res.status(400).json({ error: "Invalid message id" });
+    const result = await checkMessageNow(id);
+    const m = await MessageLog.findById(id).lean();
+    res.json({
+      result,
+      message: m && {
+        id: String(m._id),
+        status: m.status,
+        phone: m.phone,
+        testSend: Boolean(m.testSend),
+        sentAt: m.sentAt,
+        deliveredAt: m.deliveredAt,
+        readAt: m.readAt,
+        errorReason: m.errorReason,
+        lastCheckedAt: m.lastCheckedAt,
+      },
     });
   })
 );

@@ -9,6 +9,7 @@ import { formatPatientName } from "../lib/format.js";
 import { CalendarIcon, CloseIcon, FilePdfIcon, PhoneIcon, PlusIcon, SearchIcon } from "../portal/Icons.jsx";
 import { CopyableChip, Empty, HisStatusPill, Loading, ReadyPill, Toast, WaPill, fmtDateTime, prettyPhone, useToast } from "./ui.jsx";
 import { SendWhatsAppButton } from "./SendWhatsApp.jsx";
+import { OrderInfoButton } from "./OrderInfo.jsx";
 
 const STATUS_FILTERS = [
   { value: "ready", label: "Ready to send" },
@@ -28,7 +29,7 @@ const dmy = (iso) => String(iso || "").split("-").reverse().join("-");
  * Lab Search: OP lab orders across a date range — saved boards first, HIS for
  * days not loaded yet. One order can be added to the WhatsApp queue by hand.
  */
-export default function LabSearchScreen({ canQueue = false, canChangeMode = false }) {
+export default function LabSearchScreen({ canQueue = false, canChangeMode = false, canInfo = false }) {
   const [from, setFrom] = useState(dayValue(7));
   const [to, setTo] = useState(dayValue(0));
   const [filter, setFilter] = useState("ready");
@@ -287,6 +288,7 @@ export default function LabSearchScreen({ canQueue = false, canChangeMode = fals
                             }}
                           />
                         )}
+                        {canInfo && <OrderInfoButton order={o} canCheck={canQueue} />}
                         {canQueue && o.readiness !== "WAITING" && (
                           <button type="button" className="btn btn-secondary op-send-btn" disabled={!o.canQueue || queueingId === o.orderId} onClick={() => addToQueue(o)}>
                             {queueingId === o.orderId ? (

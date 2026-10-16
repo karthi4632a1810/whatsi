@@ -219,6 +219,8 @@ export const api = {
   watiOverview: () => request("/api/wati/overview"),
   watiDelivery: () => request("/api/wati/delivery"),
   sendOpOrder: (orderId, body) => post(`/api/op/orders/${encodeURIComponent(orderId)}/send`, body),
+  checkOpMessage: (messageId) => post(`/api/op/messages/${encodeURIComponent(messageId)}/check`),
+  opOrder: (orderId, day) => request(`/api/op/orders/${encodeURIComponent(orderId)}${day ? `?day=${encodeURIComponent(day)}` : ""}`),
   saveContactByUhid: (uhid, body) => put(`/api/patients/by-uhid/${encodeURIComponent(uhid)}`, body),
   saveWatiDelivery: (body) => put("/api/wati/delivery", body),
   watiTemplates: () => request("/api/wati/templates"),

@@ -42,6 +42,7 @@ export const ACTIONS = {
   queue_sync: { cat: "report" },
   report_queue: { cat: "whatsapp" },
   whatsapp_click: { cat: "whatsapp", client: true },
+  order_open: { cat: "report", client: true },
   whatsapp_popup_cancel: { cat: "whatsapp", client: true },
   whatsapp_send: { cat: "whatsapp" },
   whatsapp_retry: { cat: "whatsapp" },
@@ -186,6 +187,8 @@ export function describe(e) {
       return `Synced ready reports to the WhatsApp queue${d.date ? ` for ${dmy(d.date)}` : ""}`;
     case "report_queue":
       return d.ok ? `Queued the report of ${patient(t)} for WhatsApp` : `Couldn't queue ${patient(t)}: ${d.error || "error"}`;
+    case "order_open":
+      return `Opened the full status of ${patient(t)}`;
     case "whatsapp_click":
       return `Clicked WhatsApp for ${patient(t)}${d.mode ? ` (${d.mode} mode)` : ""}`;
     case "whatsapp_popup_cancel":

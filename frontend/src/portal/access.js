@@ -34,7 +34,7 @@ export function accessFor(me) {
   const p = perms(me);
   return {
     isSuperAdmin: Boolean(me?.isSuperAdmin),
-    reports: { canSend: canWrite(me, "reports") },
+    reports: { canSend: canWrite(me, "reports"), canView: canOpen(me, "reports") },
     wati: { canEdit: canWrite(me, "wati") },
     monitor: { canAct: canWrite(me, "monitor") },
     exports: Boolean(me?.isSuperAdmin) || p.exports !== false,

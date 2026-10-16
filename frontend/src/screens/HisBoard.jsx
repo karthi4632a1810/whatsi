@@ -29,6 +29,7 @@ import {
 } from "../portal/Icons.jsx";
 import { CopyableChip, Empty, HisStatusPill, Loading, ReadyPill, Toast, WaPill, fmtTime, prettyPhone, useToast } from "./ui.jsx";
 import { SendWhatsAppButton } from "./SendWhatsApp.jsx";
+import { OrderInfoButton } from "./OrderInfo.jsx";
 
 /** Status chips above the table; `value` is the hisFilters.js filter id. */
 const STATUS_FILTERS = [
@@ -296,17 +297,16 @@ function BoardTable({ orders, changedIds, onPreview, onToast, canSend, delivery,
                 </td>
                 <td className="op-cell-time">{fmtTime(o.completedAt)}</td>
                 <td className="cell-action">
-                  {o.canPreview ? (
-                    <div className="action-btn-group">
+                  <div className="action-btn-group">
+                    {o.canPreview && (
                       <button type="button" className="btn btn-view-pdf" onClick={() => onPreview(o)} title={`Open the lab report of ${formatPatientName(o.patientName)}`}>
                         <FilePdfIcon size={15} />
                         <span>PDF</span>
                       </button>
-                      {canSend && <SendWhatsAppButton order={o} delivery={delivery} canChangeMode={canChangeMode} onSent={onSent} />}
-                    </div>
-                  ) : (
-                    <span className="text-muted">—</span>
-                  )}
+                    )}
+                    {o.canPreview && canSend && <SendWhatsAppButton order={o} delivery={delivery} canChangeMode={canChangeMode} onSent={onSent} />}
+                    <OrderInfoButton order={o} canCheck={canSend} />
+                  </div>
                 </td>
               </tr>
             );

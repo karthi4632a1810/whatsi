@@ -63,6 +63,7 @@ const RULES = [
   ["POST", re(`/api/monitor/messages/${ID}/retry`), "whatsapp_retry", ({ body, ok }) => ({ screen: "monitor", details: { ok, error: errorOf(body, ok) } })],
   ["POST", re("/api/messages/check-now"), "whatsapp_check", ({ ok }) => (ok ? { screen: "monitor" } : null)],
   ["POST", re("/api/monitor/refresh"), "whatsapp_check", ({ ok }) => (ok ? { screen: "monitor" } : null)],
+  ["POST", re(`/api/op/messages/${ID}/check`), "whatsapp_check", ({ ok }) => (ok ? { screen: "reports" } : null)],
   ["POST", re(`/api/monitor/messages/${ID}/check`), "whatsapp_check", ({ body, ok }) =>
     ok ? { screen: "monitor", target: body.message ? { patientName: body.message.patientName, uhid: body.message.uhid } : null } : null],
   ["GET", re("/api/monitor/export"), "export", ({ req, ok }) =>

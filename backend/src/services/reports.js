@@ -89,7 +89,7 @@ function orderHasNewTests(existing, snapshot) {
   return prevTotal > 0 && newTotal > prevTotal;
 }
 
-function shouldSyncSnapshot(settings, snapshot, existing, { manual = false } = {}) {
+function shouldSyncSnapshot(settings, snapshot, existing, { manual = false, allowPartial = false } = {}) {
   if (isExcludedPatientType(snapshot.patientType)) return false;
   if (!scopeMatches(settings, snapshot.opIpType)) return false;
   if (snapshot.readiness === "WAITING") return false;
@@ -98,7 +98,7 @@ function shouldSyncSnapshot(settings, snapshot, existing, { manual = false } = {
   if (expanded) return true;
 
   if (manual) {
-    if (settings.readinessRule === "STRICT") return snapshot.readiness === "READY";
+    if (settings.readinessRule === "STRICT" && !allowPartial) return snapshot.readiness === "READY";
     return snapshot.readiness === "READY" || snapshot.readiness === "PARTIAL";
   }
 
@@ -106,7 +106,7 @@ function shouldSyncSnapshot(settings, snapshot, existing, { manual = false } = {
   return true;
 }
 
-export async function syncPatientsAndReports(snapshots, { manual = false } = {}) {
+export async function syncPatientsAndReports(snapshots, { manual = false, allowPartial = false } = {}) {
   const settings = await getSettings();
   let created = 0;
   let updated = 0;
@@ -128,7 +128,7 @@ export async function syncPatientsAndReports(snapshots, { manual = false } = {})
     });
     const existing = existingSameDay || existingLatest;
 
-    if (!shouldSyncSnapshot(settings, snapshot, existing, { manual })) {
+    if (!shouldSyncSnapshot(settings, snapshot, existing, { manual, allowPartial })) {
       skipped += 1;
       continue;
     }
@@ -587,8 +587,16 @@ export async function sendReportById(
   }
 
   const testPhones = (settings.watiTestContactPhones || []).map(normalizePhone).filter(Boolean);
+  // A person sending by hand may type a number for this one send (the HIS board popup):
+  // the patient's in Live, any number as a test in Test mode.
+  const typed = !automatic && toPhone ? normalizePhone(toPhone) : "";
+  if (toPhone && !automatic && !/^\d{11,15}$/.test(typed)) {
+    throw new SendBlockedError("That number doesn't look like a mobile — use 10 digits or the full number with country code");
+  }
   let deliveryPhones;
-  if (useTestSend) {
+  if (useTestSend && typed) {
+    deliveryPhones = [typed];
+  } else if (useTestSend) {
     const overridePhones = (Array.isArray(testContactPhones) ? testContactPhones : [])
       .map(normalizePhone)
       .filter(Boolean);
@@ -598,11 +606,6 @@ export async function sendReportById(
     if (notAllowed) throw new SendBlockedError(`${notAllowed} is not in the test number list`);
     deliveryPhones = overridePhones;
   } else {
-    // A person sending by hand may give a different number for this one send (the HIS board popup).
-    const typed = !automatic && toPhone ? normalizePhone(toPhone) : "";
-    if (toPhone && !automatic && !/^\d{11,15}$/.test(typed)) {
-      throw new SendBlockedError("That number doesn't look like a mobile — use 10 digits or the full number with country code");
-    }
     const phone = typed || effectivePhone(report.patientRef, report.phone);
     if (!phone) throw new SendBlockedError("Patient phone missing — add a number in Contacts", "NO_PHONE");
     if (!canSendToPhone(phone)) {
@@ -630,6 +633,7 @@ export async function sendReportById(
   const templateName = defaultTpl?.name || settings.watiTemplateName;
   const now = new Date();
   const sentPhones = [];
+  const messageIds = [];
   let lastResponse = null;
 
   try {
@@ -657,10 +661,10 @@ export async function sendReportById(
         patientName: claimed.patientName,
         attachmentUrl,
         templateName,
-        testSendAllowlist: useTestSend ? testPhones : null,
+        testSendAllowlist: useTestSend ? [...new Set([...testPhones, ...deliveryPhones])] : null,
       });
       sentPhones.push(phone);
-      await MessageLog.create({
+      const log = await MessageLog.create({
         reportRef: claimed._id,
         reportId: claimed.reportId,
         patientId: claimed.patientId,
@@ -685,6 +689,7 @@ export async function sendReportById(
         sentAt: new Date(),
         nextCheckAt: new Date(Date.now() + 30 * 60 * 1000),
       });
+      messageIds.push(String(log._id));
     }
 
     if (useTestSend) {
@@ -709,7 +714,7 @@ export async function sendReportById(
     claimed.lastAttemptAt = now;
     await claimed.save();
 
-    return { report: claimed, response: lastResponse, sentPhones, testSend: useTestSend };
+    return { report: claimed, response: lastResponse, sentPhones, messageIds, testSend: useTestSend };
   } catch (error) {
     const maxAttempts = settings.retryPolicy?.maxAttempts ?? 3;
     const { kind, retryable } = classifyFailure(error.message);
