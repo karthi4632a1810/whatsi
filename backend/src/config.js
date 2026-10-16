@@ -76,6 +76,12 @@ export const config = {
     // How many past days to re-check for late READY completions (excludes today)
     backlogLookbackDays: Number(process.env.EMR_BACKLOG_LOOKBACK_DAYS) || 3,
   },
+  // Saved lab report PDFs (services/pdfCache.js). In Docker: /app/data/reports on the ./data/reports volume.
+  pdfCache: {
+    dir: process.env.PDF_CACHE_DIR || path.join(rootDir, "data", "reports"),
+    // Fetch a READY order's PDF in the background as soon as the board shows it ready.
+    prefetch: process.env.PDF_PREFETCH !== "false",
+  },
   webhooks: {
     hisSecret: process.env.HIS_WEBHOOK_SECRET || "",
   },

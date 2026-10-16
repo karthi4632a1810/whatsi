@@ -27,6 +27,7 @@ export const SECTIONS = [
     intro: "Switch a feature off for all staff at once — above each person’s own permissions. The super admin always keeps everything.",
   },
   { id: "board", title: "OP Lab Reports", icon: "clock", intro: "How the OP lab board keeps itself up to date on screen." },
+  { id: "pdf", title: "Saved lab report PDFs", icon: "gauge", intro: "Copies of fully approved OP lab reports kept on the server, so reports open fast and still open when AOSTA is down." },
   { id: "security", title: "Sign-in & security", icon: "lock", intro: "Sessions, wrong-password lockout and passwords for staff accounts." },
   { id: "audit", title: "Audit log", icon: "shield", intro: "What is recorded and for how long." },
   { id: "notice", title: "Announcement & maintenance", icon: "megaphone", intro: "A message at the top of every screen, and a read-only mode for maintenance." },
@@ -43,6 +44,9 @@ export const SETTINGS = [
 
   { key: "board.refreshSeconds", section: "board", type: "select", options: [10, 15, 30, 60, 120], unit: "sec", default: 15, public: true, label: "OP Lab Reports screen refreshes every", help: "Quietly, from the server board — it doesn’t call HIS each time." },
 
+  { key: "pdf.cacheEnabled", section: "pdf", type: "bool", default: true, label: "Save report PDFs", help: "Off: every report is fetched from AOSTA each time it's opened. Saved files stay until they expire, and are still used if AOSTA is down." },
+  { key: "pdf.cacheDays", section: "pdf", type: "number", min: 7, max: 730, step: 1, unit: "days", default: 120, env: "PDF_CACHE_DAYS", label: "Keep saved PDFs for", help: "Counted from when the copy was fetched. Older files are deleted by the nightly clean-up (03:15)." },
+
   { key: "auth.sessionHours", section: "security", type: "number", min: 1, max: 24, step: 1, unit: "hours", default: 12, label: "Stay signed in for", help: "After this, everyone signs in again. Applies to new sign-ins." },
   { key: "auth.idleSignOutMinutes", section: "security", type: "number", min: 0, max: 480, step: 5, unit: "min", default: 0, public: true, label: "Sign out after no activity for", help: "For shared computers: no mouse or keyboard for this long signs the person out. 0 = never." },
   { key: "auth.maxFailedLogins", section: "security", type: "number", min: 3, max: 20, step: 1, unit: "tries", default: 5, label: "Lock an account after wrong passwords", help: "Super admin accounts are never locked." },
@@ -58,6 +62,14 @@ export const SETTINGS = [
 ];
 
 const BY_KEY = new Map(SETTINGS.map((s) => [s.key, s]));
+
+/** The value before anyone changes it here: the .env one when the setting has one, else the built-in default. */
+function baseValue(def) {
+  if (def.env && process.env[def.env] !== undefined && process.env[def.env] !== "" && Number.isFinite(Number(process.env[def.env]))) {
+    return clamp(def, Number(process.env[def.env]));
+  }
+  return def.default;
+}
 
 function clamp(def, n) {
   let v = Math.round(Number(n) / (def.step || 1)) * (def.step || 1);
@@ -102,7 +114,7 @@ const listeners = [];
 export function setting(key) {
   const def = BY_KEY.get(key);
   if (!def) throw new Error(`Unknown setting ${key}`);
-  return Object.prototype.hasOwnProperty.call(stored, key) ? stored[key] : def.default;
+  return Object.prototype.hasOwnProperty.call(stored, key) ? stored[key] : baseValue(def);
 }
 
 /** Run something when settings change (e.g. the audit log's retention). */
@@ -165,7 +177,7 @@ export async function updateSettings(patch = {}, by) {
     const before = setting(key);
     if (raw === null || raw === "default") {
       unset[`values.${key}`] = "";
-      if (def.default !== before) changes.push({ key, label: def.label, from: display(def, before), to: `${display(def, def.default)} (default)` });
+      if (baseValue(def) !== before) changes.push({ key, label: def.label, from: display(def, before), to: `${display(def, baseValue(def))} (default)` });
       continue;
     }
     const value = validateSetting(def, raw);
@@ -198,7 +210,8 @@ export async function settingsScreen() {
     settings: SETTINGS.map((def) => ({
       ...def,
       value: setting(def.key),
-      baseValue: def.default,
+      baseValue: baseValue(def),
+      fromEnv: Boolean(def.env && process.env[def.env]),
       changed: Object.prototype.hasOwnProperty.call(stored, def.key),
     })),
     updatedAt: meta.updatedAt,

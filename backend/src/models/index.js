@@ -90,6 +90,33 @@ const orderPdfMetaSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+/**
+ * A lab report PDF saved on disk (services/pdfCache.js) — only the details
+ * here; the file itself is under PDF_CACHE_DIR, never in MongoDB, so the
+ * nightly backups stay small.
+ */
+const pdfCacheEntrySchema = new mongoose.Schema(
+  {
+    orderId: { type: String, required: true, unique: true },
+    labDay: { type: String, default: "" },
+    // Relative to PDF_CACHE_DIR: YYYY/MM/DD/<orderId>-<hash>.pdf
+    path: { type: String, required: true },
+    size: { type: Number, default: 0 },
+    checksum: { type: String, default: "" }, // sha256 of the file
+    fetchedAt: { type: Date, default: Date.now, index: true },
+    approvedCount: { type: Number, default: 0 },
+    procedureTotal: { type: Number, default: 0 },
+    procIds: [{ type: Number }],
+    // What the PDF was made from (procIds, approved count, results) — differs from the board → stale.
+    contentKey: { type: String, default: "" },
+    stale: { type: Boolean, default: false },
+    staleAt: { type: Date, default: null },
+    servedCount: { type: Number, default: 0 },
+    lastServedAt: { type: Date, default: null },
+  },
+  { timestamps: true }
+);
+
 const hisLabOrderSchema = new mongoose.Schema(
   {
     labDay: { type: String, required: true, index: true },
@@ -303,6 +330,7 @@ userSchema.index({ email: 1 }, { unique: true, partialFilterExpression: { email:
 export const Patient = mongoose.model("Patient", patientSchema);
 export const Report = mongoose.model("Report", reportSchema);
 export const OrderPdfMeta = mongoose.model("OrderPdfMeta", orderPdfMetaSchema);
+export const PdfCacheEntry = mongoose.model("PdfCacheEntry", pdfCacheEntrySchema);
 export const HisLabOrder = mongoose.model("HisLabOrder", hisLabOrderSchema);
 export const LabBoardDay = mongoose.model("LabBoardDay", labBoardDaySchema);
 export const AutomationSettings = mongoose.model("AutomationSettings", automationSettingsSchema);
