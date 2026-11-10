@@ -22,6 +22,7 @@ import webhookRoutes from "./routes/webhooks.js";
 import opRoutes from "./routes/op.js";
 import publicRoutes from "./routes/public.js";
 import monitorRoutes from "./routes/monitor.js";
+import reportsApiRoutes from "./routes/reportsApi.js";
 import { recoverAfterRestart, startScheduler } from "./jobs/scheduler.js";
 import { migrateSettings } from "./services/reports.js";
 import { loadSettings, startSettingsRefresh } from "./services/appSettings.js";
@@ -46,6 +47,8 @@ app.use("/api/auth", authRoutes);
 // No login: signed, expiring report links opened by WATI / the patient's phone.
 app.use("/api/public", publicRoutes);
 app.use("/api/webhooks", webhookRoutes);
+// Universal Lab Report Fetch API (PDF / JSON by UHID):
+app.use("/api/reports", reportsApiRoutes);
 
 // Everything below needs a signed-in account; each route's permission: services/accessControl.js.
 app.use("/api", authRequired);

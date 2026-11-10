@@ -103,11 +103,11 @@ async function fetchLabRows(strQuery) {
   return extractObjectRows(parsed);
 }
 
-function buildLabHistoryQuery({ fromDate, toDate, requestNo = "", status = "6" }) {
+function buildLabHistoryQuery({ fromDate, toDate, requestNo = "", regNo = "", status = "6" }) {
   return (
     `Use KMCH_Lab EXEC LabTestResultHistoryQB ` +
     `@FromDate = ${sqlLiteral(fromDate)} , @ToDate = ${sqlLiteral(toDate)} , ` +
-    `@RegNo = '' , @RequestNo = ${sqlLiteral(requestNo)} , @IPNO = '' , @BillNo = '' , ` +
+    `@RegNo = ${sqlLiteral(regNo)} , @RequestNo = ${sqlLiteral(requestNo)} , @IPNO = '' , @BillNo = '' , ` +
     `@PatName = '' , @BedNo = '' , @Dept = '' , @Doc = '0' , @Proc = '0' , ` +
     `@PatCategory = '1,2,3' , @Status = '${status}' , @bDiscaintimation = '1' , ` +
     `@PatType = '0' , @Result = '1' `
@@ -151,6 +151,17 @@ export async function fetchOrderStatusRows(orderId, from, to) {
     buildLabHistoryQuery({ fromDate, toDate, requestNo: orderId, status: "0" })
   );
   return rows.map(mapEmrRow).filter((row) => row.orderId === String(orderId));
+}
+
+export async function fetchLabRowsForRegNo({ regNo, from, to, emrStatus = "0" }) {
+  const cleanRegNo = String(regNo || "").trim();
+  if (!cleanRegNo) return [];
+  const fromDate = from ? formatSqlDateTime(from, false) : "01/01/2020 00:00";
+  const toDate = to ? formatSqlDateTime(to, true) : formatSqlDateTime(new Date(), true);
+  const rows = await fetchQueryRows(
+    buildLabHistoryQuery({ fromDate, toDate, regNo: cleanRegNo, status: emrStatus })
+  );
+  return rows.map(mapEmrRow).filter((row) => row.orderId);
 }
 
 /** Order IDs go into SQL text sent to the EMR, so only plain in-range integers pass. */
